@@ -2,6 +2,7 @@ import yaml
 import os
 import re
 import jinja2
+import logging
 from typing import Optional
 from jobsherpa.agent.tool_executor import ToolExecutor
 from jobsherpa.agent.job_state_tracker import JobStateTracker
@@ -9,6 +10,8 @@ from haystack.document_stores import InMemoryDocumentStore
 from haystack.nodes import BM25Retriever
 from haystack import Pipeline
 from haystack import Document
+
+logger = logging.getLogger(__name__)
 
 class JobSherpaAgent:
     """
@@ -30,10 +33,12 @@ class JobSherpaAgent:
         self.system_config = self._load_system_config(system_profile)
         self.tracker = JobStateTracker()
         self.rag_pipeline = self._initialize_rag_pipeline()
+        logger.info("JobSherpaAgent initialized.")
 
     def start(self):
         """Starts the agent's background threads."""
         self.tracker.start_monitoring()
+        logger.info("Agent background monitoring started.")
 
     def check_jobs(self):
         """Triggers the job state tracker to check for updates."""
@@ -42,6 +47,7 @@ class JobSherpaAgent:
     def stop(self):
         """Stops the agent's background threads."""
         self.tracker.stop_monitoring()
+        logger.info("Agent background monitoring stopped.")
 
     def get_job_status(self, job_id: str) -> Optional[str]:
         """Gets the status of a job from the tracker."""
@@ -51,6 +57,9 @@ class JobSherpaAgent:
         """Loads all application recipes from the knowledge base."""
         recipes = {}
         app_dir = os.path.join(self.knowledge_base_dir, "applications")
+        if not os.path.isdir(app_dir):
+            logger.warning("Applications directory not found at: %s", app_dir)
+            return {}
         for filename in os.listdir(app_dir):
             if filename.endswith(".yaml"):
                 with open(os.path.join(app_dir, filename), 'r') as f:
@@ -64,6 +73,7 @@ class JobSherpaAgent:
             return None
         
         system_file = os.path.join(self.knowledge_base_dir, "system", f"{profile_name}.yaml")
+        logger.debug("Loading system profile from: %s", system_file)
         if os.path.exists(system_file):
             with open(system_file, 'r') as f:
                 return yaml.safe_load(f)
@@ -75,6 +85,10 @@ class JobSherpaAgent:
         
         # Index all application recipes
         app_dir = os.path.join(self.knowledge_base_dir, "applications")
+        if not os.path.isdir(app_dir):
+            logger.warning("Applications directory not found for RAG indexing: %s", app_dir)
+            return Pipeline() # Return empty pipeline
+
         docs = []
         for filename in os.listdir(app_dir):
             if filename.endswith(".yaml"):
@@ -85,7 +99,8 @@ class JobSherpaAgent:
                     doc = Document(content=content, meta=recipe)
                     docs.append(doc)
         
-        document_store.write_documents(docs)
+        if docs:
+            document_store.write_documents(docs)
         
         retriever = BM25Retriever(document_store=document_store)
         pipeline = Pipeline()
@@ -112,18 +127,23 @@ class JobSherpaAgent:
         The main entry point for the agent to process a user prompt.
         Returns a user-facing response string and an optional job ID.
         """
-        print(f"Agent received prompt: {prompt}")
+        logger.info("Agent received prompt: '%s'", prompt)
 
         recipe = self._find_matching_recipe(prompt)
 
         if not recipe:
+            logger.warning("No matching recipe found for prompt.")
             return "Sorry, I don't know how to handle that.", None
+        
+        logger.debug("Found matching recipe: %s", recipe["name"])
 
         # Check if the recipe uses a template
         if "template" in recipe:
             template_name = recipe["template"]
             template_args = recipe.get("template_args", {})
             
+            logger.info("Rendering script from template: %s", template_name)
+
             # Create a Jinja2 environment
             template_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'tools')
             env = jinja2.Environment(loader=jinja2.FileSystemLoader(template_dir))
@@ -131,6 +151,7 @@ class JobSherpaAgent:
             try:
                 template = env.get_template(template_name)
                 rendered_script = template.render(template_args)
+                logger.debug("Rendered script content:\n%s", rendered_script)
                 
                 # The "tool" in a templated recipe is the command to pipe the script to
                 submit_command = recipe["tool"]
@@ -141,8 +162,10 @@ class JobSherpaAgent:
                 execution_result = self.tool_executor.execute(submit_command, [], script_content=rendered_script)
 
             except jinja2.TemplateNotFound:
+                logger.error("Template '%s' not found in tools directory.", template_name)
                 return f"Error: Template '{template_name}' not found.", None
             except Exception as e:
+                logger.error("Error rendering template: %s", e, exc_info=True)
                 return f"Error rendering template: {e}", None
         else:
             # Fallback to existing logic for non-templated recipes
@@ -151,6 +174,7 @@ class JobSherpaAgent:
                 tool_name = self.system_config["commands"][tool_name]
             
             args = recipe.get('args', [])
+            logger.debug("Executing non-templated tool: %s with args: %s", tool_name, args)
             execution_result = self.tool_executor.execute(tool_name, args)
 
         job_id = self._parse_job_id(execution_result)
@@ -158,9 +182,11 @@ class JobSherpaAgent:
             # Pass the parser info to the tracker when registering the job
             output_parser = recipe.get("output_parser")
             self.tracker.register_job(job_id, output_parser_info=output_parser)
+            logger.info("Job %s submitted successfully.", job_id)
             response = f"Found recipe '{recipe['name']}'.\nJob submitted successfully with ID: {job_id}"
             return response, job_id
 
+        logger.info("Execution finished, but no job ID was parsed.")
         response = f"Found recipe '{recipe['name']}'.\nExecution result: {execution_result}"
         return response, None
 

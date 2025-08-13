@@ -1,8 +1,15 @@
 import typer
+import logging
 from jobsherpa.agent.agent import JobSherpaAgent
 
 def main(
     prompt: str,
+    verbose: bool = typer.Option(
+        False, "-v", "--verbose", help="Enable INFO level logging."
+    ),
+    debug: bool = typer.Option(
+        False, "--debug", help="Enable DEBUG level logging."
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Run in dry-run mode without executing real commands."
     ),
@@ -13,18 +20,30 @@ def main(
     """
     Run the JobSherpa agent with a specific prompt.
     """
-    print("CLI is running...")
+    # Configure logging
+    log_level = logging.WARNING
+    if debug:
+        log_level = logging.DEBUG
+    elif verbose:
+        log_level = logging.INFO
+    
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    logging.info("CLI is running...")
     agent = JobSherpaAgent(
         dry_run=dry_run,
         system_profile=system_profile
     )
     agent.start()
     response, job_id = agent.run(prompt)
-    print("CLI received response:")
+    
+    # Use logger for agent output, but print final response to stdout
+    logging.info("CLI received response: %s", response)
     print(f"--> {response}")
     
-    # In a real CLI, we might want to start polling here or just exit.
-    # For now, we'll just stop the agent to clean up the thread.
     agent.stop()
 
 def run_app():

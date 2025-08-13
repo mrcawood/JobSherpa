@@ -2,7 +2,10 @@ import threading
 import time
 import subprocess
 import re
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 class JobStateTracker:
     """
@@ -26,6 +29,7 @@ class JobStateTracker:
                 "output_parser": output_parser_info,
                 "result": None
             }
+            logger.info("Registered new job: %s", job_id)
 
     def get_status(self, job_id: str) -> Optional[str]:
         """
@@ -38,13 +42,15 @@ class JobStateTracker:
         Updates the status of a specific job.
         """
         if job_id in self._jobs:
+            if self._jobs[job_id]["status"] != status:
+                logger.info("Job %s status changed to: %s", job_id, status)
             self._jobs[job_id]["status"] = status
             if status == "COMPLETED" and self._jobs[job_id]["output_parser"]:
                 self._parse_job_output(job_id)
     
     def get_result(self, job_id: str) -> Optional[str]:
         """Gets the parsed result of a completed job."""
-        return self._jobs.get(job_id, {}).get("result")
+        return self._jobs[job_id].get("result") if job_id in self._jobs else None
 
     def _parse_job_output(self, job_id: str):
         """Parses the output file of a completed job to find a result."""
@@ -57,19 +63,25 @@ class JobStateTracker:
         regex = parser_info.get("parser_regex")
 
         if not output_file or not regex:
+            logger.warning("Job %s is missing 'file' or 'parser_regex' in its output_parser info.", job_id)
             return
 
+        logger.info("Parsing output file '%s' for job %s", output_file, job_id)
         try:
             with open(output_file, 'r') as f:
                 content = f.read()
             
             match = re.search(regex, content)
             if match:
-                self._jobs[job_id]["result"] = match.group(1)
+                result = match.group(1)
+                self._jobs[job_id]["result"] = result
+                logger.debug("Successfully parsed result for job %s: %s", job_id, result)
+            else:
+                logger.warning("Regex did not find a match in output file for job %s", job_id)
         except FileNotFoundError:
-            print(f"Warning: Could not find output file {output_file} to parse for job {job_id}.")
+            logger.warning("Could not find output file %s to parse for job %s.", output_file, job_id)
         except Exception as e:
-            print(f"Warning: Error parsing file {output_file} for job {job_id}: {e}")
+            logger.warning("Error parsing file %s for job %s: %s", output_file, job_id, e, exc_info=True)
 
     def _parse_squeue_status(self, squeue_output: str, job_id: str) -> Optional[str]:
         """Parses the status from squeue output."""
@@ -124,6 +136,7 @@ class JobStateTracker:
                         capture_output=True,
                         text=True,
                     )
+                    logger.debug("squeue output for job %s:\n%s", job_id, squeue_result.stdout)
                     new_status = self._parse_squeue_status(squeue_result.stdout, job_id)
                     
                     if new_status:
@@ -135,11 +148,12 @@ class JobStateTracker:
                             capture_output=True,
                             text=True,
                         )
+                        logger.debug("sacct output for job %s:\n%s", job_id, sacct_result.stdout)
                         final_status = self._parse_sacct_status(sacct_result.stdout, job_id)
                         if final_status:
                             self.set_status(job_id, final_status)
                 except FileNotFoundError:
-                    print("Warning: SLURM commands not found. Cannot check job status.")
+                    logger.error("SLURM commands (squeue, sacct) not found. Cannot check job status.")
                     break
 
     def _monitor_loop(self):

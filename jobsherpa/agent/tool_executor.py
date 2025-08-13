@@ -1,6 +1,9 @@
 import subprocess
 import os
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 class ToolExecutor:
     """
@@ -24,7 +27,9 @@ class ToolExecutor:
         else:
             command = [tool_name] + args
 
-        print(f"ToolExecutor received command: {' '.join(command)}")
+        logger.debug("Executing command: %s", " ".join(command))
+        if script_content:
+            logger.debug("Passing stdin to command:\n%s", script_content)
 
         if self.dry_run:
             if script_content:
@@ -39,6 +44,14 @@ class ToolExecutor:
                 check=True,
                 input=script_content
             )
+            logger.debug("Command successful. stdout: %s", result.stdout)
             return result.stdout
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        except subprocess.CalledProcessError as e:
+            logger.error(
+                "Error executing tool '%s'. Return code: %s\n---STDOUT---\n%s\n---STDERR---\n%s",
+                " ".join(command), e.returncode, e.stdout, e.stderr
+            )
+            return f"Error executing tool: {e}"
+        except FileNotFoundError as e:
+            logger.error("Error executing tool '%s'. File not found.", " ".join(command))
             return f"Error executing tool: {e}"
