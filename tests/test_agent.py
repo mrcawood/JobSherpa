@@ -250,3 +250,36 @@ def test_agent_merges_user_and_system_profiles():
             
             # Assert that values from the recipe were also rendered
             assert "#SBATCH --job-name=test-rng-job" in rendered_script
+
+def test_agent_fails_gracefully_with_missing_requirements():
+    """
+    Tests that if a system requires parameters (e.g., partition) and
+    they are not provided by any profile or recipe, the agent returns
+    an informative error instead of trying to submit a broken script.
+    """
+    # Note: No user_profile is provided here
+    agent = JobSherpaAgent(
+        dry_run=False,
+        system_profile="vista"
+    )
+    
+    # Mock the RAG pipeline to return a simple recipe
+    with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
+        mock_document = MagicMock()
+        mock_document.meta = {
+            "name": "random_number_generator",
+            "template": "random_number.sh.j2",
+            "template_args": {"job_name": "test-rng-job"}, # Missing partition/allocation
+            "tool": "submit"
+        }
+        mock_pipeline_run.return_value = {"documents": [mock_document]}
+        
+        # The agent should not even attempt to run a subprocess
+        with patch("subprocess.run") as mock_subprocess:
+            response, job_id = agent.run("Generate a random number")
+            
+            assert job_id is None
+            assert "Missing required job parameters" in response
+            assert "partition" in response
+            assert "allocation" in response
+            mock_subprocess.assert_not_called()

@@ -166,6 +166,16 @@ class JobSherpaAgent:
             # 3. Add recipe-specific args, overwriting user/system defaults
             context.update(recipe.get("template_args", {}))
 
+            # Validate that all system requirements are met
+            if self.system_config and "job_requirements" in self.system_config:
+                missing_reqs = [
+                    req for req in self.system_config["job_requirements"] if req not in context
+                ]
+                if missing_reqs:
+                    error_msg = f"Missing required job parameters for system '{self.system_config['name']}': {', '.join(missing_reqs)}"
+                    logger.error(error_msg)
+                    return error_msg, None
+
             logger.info("Rendering script from template: %s", template_name)
 
             # Create a Jinja2 environment
