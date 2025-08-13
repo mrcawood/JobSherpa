@@ -1,5 +1,6 @@
 import subprocess
 import os
+from typing import Optional
 
 class ToolExecutor:
     """
@@ -9,7 +10,7 @@ class ToolExecutor:
         self.dry_run = dry_run
         self.tool_dir = tool_dir
 
-    def execute(self, tool_name: str, args: list[str], script_content: str | None = None) -> str:
+    def execute(self, tool_name: str, args: list[str], script_content: Optional[str] = None) -> str:
         """
         Executes a given tool with arguments.
         It first checks for a local tool in the tool_dir, otherwise

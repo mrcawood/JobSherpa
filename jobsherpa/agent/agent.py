@@ -2,6 +2,7 @@ import yaml
 import os
 import re
 import jinja2
+from typing import Optional
 from jobsherpa.agent.tool_executor import ToolExecutor
 from jobsherpa.agent.job_state_tracker import JobStateTracker
 from haystack.document_stores import InMemoryDocumentStore
@@ -18,7 +19,7 @@ class JobSherpaAgent:
         self, 
         dry_run: bool = False, 
         knowledge_base_dir: str = "knowledge_base",
-        system_profile: str | None = None
+        system_profile: Optional[str] = None
     ):
         """
         Initializes the agent.
@@ -42,7 +43,7 @@ class JobSherpaAgent:
         """Stops the agent's background threads."""
         self.tracker.stop_monitoring()
 
-    def get_job_status(self, job_id: str) -> str | None:
+    def get_job_status(self, job_id: str) -> Optional[str]:
         """Gets the status of a job from the tracker."""
         return self.tracker.get_status(job_id)
 
@@ -57,7 +58,7 @@ class JobSherpaAgent:
                     recipes[recipe['name']] = recipe
         return recipes
 
-    def _load_system_config(self, profile_name: str | None):
+    def _load_system_config(self, profile_name: Optional[str]):
         """Loads a specific system configuration from the knowledge base."""
         if not profile_name:
             return None
@@ -99,14 +100,14 @@ class JobSherpaAgent:
             return results["documents"][0].meta
         return None
 
-    def _parse_job_id(self, output: str) -> str | None:
+    def _parse_job_id(self, output: str) -> Optional[str]:
         """Parses a job ID from a string using regex."""
         match = re.search(r"Submitted batch job (\S+)", output)
         if match:
             return match.group(1)
         return None
 
-    def run(self, prompt: str) -> tuple[str, str | None]:
+    def run(self, prompt: str) -> tuple[str, Optional[str]]:
         """
         The main entry point for the agent to process a user prompt.
         Returns a user-facing response string and an optional job ID.
@@ -163,6 +164,6 @@ class JobSherpaAgent:
         response = f"Found recipe '{recipe['name']}'.\nExecution result: {execution_result}"
         return response, None
 
-    def get_job_result(self, job_id: str) -> str | None:
+    def get_job_result(self, job_id: str) -> Optional[str]:
         """Gets the parsed result of a completed job."""
         return self.tracker.get_result(job_id)

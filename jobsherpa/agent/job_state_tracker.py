@@ -2,6 +2,7 @@ import threading
 import time
 import subprocess
 import re
+from typing import Optional
 
 class JobStateTracker:
     """
@@ -14,7 +15,7 @@ class JobStateTracker:
         self._stop_event = threading.Event()
         self.cycle_done_event = threading.Event()
 
-    def register_job(self, job_id: str, output_parser_info: dict | None = None):
+    def register_job(self, job_id: str, output_parser_info: Optional[dict] = None):
         """
         Registers a new job with a default 'PENDING' status.
         """
@@ -26,7 +27,7 @@ class JobStateTracker:
                 "result": None
             }
 
-    def get_status(self, job_id: str) -> str | None:
+    def get_status(self, job_id: str) -> Optional[str]:
         """
         Retrieves the status of a specific job.
         """
@@ -41,7 +42,7 @@ class JobStateTracker:
             if status == "COMPLETED" and self._jobs[job_id]["output_parser"]:
                 self._parse_job_output(job_id)
     
-    def get_result(self, job_id: str) -> str | None:
+    def get_result(self, job_id: str) -> Optional[str]:
         """Gets the parsed result of a completed job."""
         return self._jobs.get(job_id, {}).get("result")
 
@@ -70,7 +71,7 @@ class JobStateTracker:
         except Exception as e:
             print(f"Warning: Error parsing file {output_file} for job {job_id}: {e}")
 
-    def _parse_squeue_status(self, squeue_output: str, job_id: str) -> str | None:
+    def _parse_squeue_status(self, squeue_output: str, job_id: str) -> Optional[str]:
         """Parses the status from squeue output."""
         if not squeue_output:
             return None
@@ -98,7 +99,7 @@ class JobStateTracker:
                 # Other states like F, CA, TO etc. mean it's finished but we wait for sacct
         return None  # Not found in squeue, might be completed
 
-    def _parse_sacct_status(self, sacct_output: str, job_id: str) -> str | None:
+    def _parse_sacct_status(self, sacct_output: str, job_id: str) -> Optional[str]:
         """Parses the final status from sacct output."""
         lines = sacct_output.strip().split('\n')
         for line in lines:
