@@ -16,6 +16,9 @@ def main(
     system_profile: str = typer.Option(
         None, "--system-profile", help="The name of the system profile to use from the knowledge base."
     ),
+    user_profile: str = typer.Option(
+        None, "--user-profile", help="The name of the user profile to use for default values."
+    ),
 ):
     """
     Run the JobSherpa agent with a specific prompt.
@@ -35,7 +38,8 @@ def main(
     logging.info("CLI is running...")
     agent = JobSherpaAgent(
         dry_run=dry_run,
-        system_profile=system_profile
+        system_profile=system_profile,
+        user_profile=user_profile
     )
     agent.start()
     response, job_id = agent.run(prompt)

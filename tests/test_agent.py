@@ -209,3 +209,44 @@ def test_agent_parses_job_output():
             assert agent.get_job_status(job_id) == "COMPLETED"
             assert agent.get_job_result(job_id) == random_number
             mock_file.assert_called_with(output_filename, 'r')
+
+def test_agent_merges_user_and_system_profiles():
+    """
+    Tests that the agent can load a user profile and a system profile,
+    merge their values with the recipe's arguments, and render a
+    complete job script.
+    """
+    agent = JobSherpaAgent(
+        dry_run=False,
+        system_profile="vista",
+        user_profile="mcawood"
+    )
+    
+    # Mock the RAG pipeline
+    with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
+        mock_document = MagicMock()
+        mock_document.meta = {
+            "name": "random_number_generator",
+            "template": "random_number.sh.j2",
+            "template_args": {
+                "job_name": "test-rng-job",
+                "output_file": "test_output.txt"
+            },
+            "tool": "submit"
+        }
+        mock_pipeline_run.return_value = {"documents": [mock_document]}
+        
+        # Mock subprocess.run to inspect the final script
+        with patch("subprocess.run") as mock_subprocess:
+            mock_subprocess.return_value = MagicMock(stdout="Submitted batch job mock_123")
+            agent.run("Generate a random number")
+            
+            # Check the stdin passed to the sbatch command
+            rendered_script = mock_subprocess.call_args.kwargs["input"]
+            
+            # Assert that values from the user profile were merged and rendered
+            assert "#SBATCH --partition=development" in rendered_script
+            assert "#SBATCH --account=TACC-12345" in rendered_script
+            
+            # Assert that values from the recipe were also rendered
+            assert "#SBATCH --job-name=test-rng-job" in rendered_script

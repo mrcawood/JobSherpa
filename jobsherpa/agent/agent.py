@@ -22,7 +22,8 @@ class JobSherpaAgent:
         self, 
         dry_run: bool = False, 
         knowledge_base_dir: str = "knowledge_base",
-        system_profile: Optional[str] = None
+        system_profile: Optional[str] = None,
+        user_profile: Optional[str] = None
     ):
         """
         Initializes the agent.
@@ -31,6 +32,7 @@ class JobSherpaAgent:
         self.tool_executor = ToolExecutor(dry_run=self.dry_run)
         self.knowledge_base_dir = knowledge_base_dir
         self.system_config = self._load_system_config(system_profile)
+        self.user_config = self._load_user_config(user_profile)
         self.tracker = JobStateTracker()
         self.rag_pipeline = self._initialize_rag_pipeline()
         logger.info("JobSherpaAgent initialized.")
@@ -76,6 +78,18 @@ class JobSherpaAgent:
         logger.debug("Loading system profile from: %s", system_file)
         if os.path.exists(system_file):
             with open(system_file, 'r') as f:
+                return yaml.safe_load(f)
+        return None
+
+    def _load_user_config(self, profile_name: Optional[str]):
+        """Loads a specific user configuration from the knowledge base."""
+        if not profile_name:
+            return None
+        
+        user_file = os.path.join(self.knowledge_base_dir, "user", f"{profile_name}.yaml")
+        logger.debug("Loading user profile from: %s", user_file)
+        if os.path.exists(user_file):
+            with open(user_file, 'r') as f:
                 return yaml.safe_load(f)
         return None
 
@@ -140,8 +154,18 @@ class JobSherpaAgent:
         # Check if the recipe uses a template
         if "template" in recipe:
             template_name = recipe["template"]
-            template_args = recipe.get("template_args", {})
             
+            # Build the template rendering context
+            context = {}
+            # 1. Start with system defaults (if any)
+            if self.system_config and "defaults" in self.system_config:
+                context.update(self.system_config["defaults"])
+            # 2. Add user defaults, overwriting system defaults
+            if self.user_config and "defaults" in self.user_config:
+                context.update(self.user_config["defaults"])
+            # 3. Add recipe-specific args, overwriting user/system defaults
+            context.update(recipe.get("template_args", {}))
+
             logger.info("Rendering script from template: %s", template_name)
 
             # Create a Jinja2 environment
@@ -150,7 +174,7 @@ class JobSherpaAgent:
             
             try:
                 template = env.get_template(template_name)
-                rendered_script = template.render(template_args)
+                rendered_script = template.render(context)
                 logger.debug("Rendered script content:\n%s", rendered_script)
                 
                 # The "tool" in a templated recipe is the command to pipe the script to

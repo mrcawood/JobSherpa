@@ -15571,3 +15571,897 @@ interesting, the sbatch command is being used however we still have an error. we
 
 ---
 
+_**Assistant**_
+
+<think><details><summary>Thought Process</summary>
+**Choosing the Right Tool**
+
+I've decided the `logging` module is the way to go. The built-in Python library is a robust and flexible option for capturing everything I need, and it's standard, too. I'm now thinking about how to best configure it.
+
+
+**Planning the Implementation**
+
+I'm moving on to the implementation specifics. I'll use the `logging` module, with CLI flags to control verbosity, defaulting to WARN/ERROR. I'm crafting a consistent formatter with timestamps, log levels, and module names. I've pinpointed key logging locations in `cli/main.py`, `agent/agent.py` for state transitions, and `agent/tool_executor.py` to capture the executed commands, especially the `stdin` passed to sbatch.
+
+
+**Finalizing Logging Details**
+
+I'm currently working on the detailed implementation steps. I'll add a logger to `cli/main.py`, using Typer's callback to manage `--verbose` and `--debug` flags, setting the root logger's level. Next, I'll add logging statements to `agent/agent.py` to track state transitions and in `agent/tool_executor.py` to capture executed commands. Then, I plan to log job state changes in `agent/job_state_tracker.py`. I need to also decide how the formatted logging output will look; should I write a custom class for this or use the standard formatting options?
+
+
+**Outlining the Details**
+
+I'm now refining the implementation strategy. I'll use Typer for CLI flag handling, prioritizing `--debug` over `--verbose`. I plan to initialize the root logger in `cli/main.py` via `logging.basicConfig`, setting the level based on the flags. I'm also planning the logging calls within agent modules, including state transitions and command executions. Debug output will include rendered script content. I need to finalize the configuration and formatting.
+
+
+**Structuring the CLI**
+
+I'm now focusing on the CLI setup and root logger configuration in `cli/main.py`. I've added the `--verbose` and `--debug` flags using Typer. A straightforward `if/elif/else` block within `main` will control the root logger's level. Next step is to actually implement logging calls throughout the agent.
+
+
+</details></think>
+
+---
+
+
+
+You've hit on a critical point. The current error `Command '['sbatch']' returned non-zero exit status 1` is generic. We know `sbatch` is failing, but we can't see *why*. It's likely failing because it's receiving an empty standard input, but we have no way to verify that.
+
+You are absolutely right: now is the perfect time to implement a proper logging infrastructure. This will give us the visibility we need to solve this problem and will be invaluable for all future development and debugging.
+
+I will implement a logging system with the following features:
+1.  **Standard `logging` module:** We'll use Python's built-in `logging` for a robust and standard solution.
+2.  **Consistent Formatting:** All log messages will follow the format: `TIMESTAMP - MODULE_NAME - LOG_LEVEL - MESSAGE`.
+3.  **Two Verbosity Levels:**
+    *   `--verbose` (`-v`): Sets the logging level to `INFO` for high-level progress messages.
+    *   `--debug`: Sets the logging level to `DEBUG` for detailed, granular information, including the content of the rendered script being passed to `sbatch`.
+    *   **Default:** If neither flag is present, the logging level will be `WARNING`, keeping the output clean for regular use.
+
+I will now go through the application and add logging statements. I'll start by updating the CLI entrypoint in `jobsherpa/cli/main.py` to control the verbosity.
+
+---
+
+<details><summary>Edit file: jobsherpa/cli/main.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 7, lines removed: undefined
+
+```diff
+@@ -1,7 +1,14 @@
+  import typer
++ import logging
+  from jobsherpa.agent.agent import JobSherpaAgent
+  
+  def main(
+      prompt: str,
++     verbose: bool = typer.Option(
++         False, "-v", "--verbose", help="Enable INFO level logging."
++     ),
++     debug: bool = typer.Option(
++         False, "--debug", help="Enable DEBUG level logging."
++     ),
+      dry_run: bool = typer.Option(
+          False, "--dry-run", help="Run in dry-run mode without executing real commands."
+```
+
+**Chunk 2**
+Lines added: 13, lines removed: 1
+
+```diff
+@@ -14,5 +21,17 @@
+      Run the JobSherpa agent with a specific prompt.
+      """
+-     print("CLI is running...")
++     # Configure logging
++     log_level = logging.WARNING
++     if debug:
++         log_level = logging.DEBUG
++     elif verbose:
++         log_level = logging.INFO
++     
++     logging.basicConfig(
++         level=log_level,
++         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
++     )
++ 
++     logging.info("CLI is running...")
+      agent = JobSherpaAgent(
+          dry_run=dry_run,
+```
+
+**Chunk 3**
+Lines added: 3, lines removed: 3
+
+```diff
+@@ -21,9 +40,9 @@
+      agent.start()
+      response, job_id = agent.run(prompt)
+-     print("CLI received response:")
++     
++     # Use logger for agent output, but print final response to stdout
++     logging.info("CLI received response: %s", response)
+      print(f"--> {response}")
+      
+-     # In a real CLI, we might want to start polling here or just exit.
+-     # For now, we'll just stop the agent to clean up the thread.
+      agent.stop()
+  
+```
+
+</details>
+
+---
+
+Now I will add logging to the `JobSherpaAgent`. This will include:
+*   An `INFO` message when the agent receives a prompt.
+*   A `DEBUG` message showing which recipe was found.
+*   An `INFO` message when a template is being rendered.
+*   A `DEBUG` message containing the full content of the rendered script.
+*   `WARNING` messages for errors like a missing recipe or template.
+
+---
+
+<details><summary>Edit file: jobsherpa/agent/agent.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -3,4 +3,5 @@
+  import re
+  import jinja2
++ import logging
+  from typing import Optional
+  from jobsherpa.agent.tool_executor import ToolExecutor
+```
+
+**Chunk 2**
+Lines added: 2, lines removed: undefined
+
+```diff
+@@ -10,4 +11,6 @@
+  from haystack import Pipeline
+  from haystack import Document
++ 
++ logger = logging.getLogger(__name__)
+  
+  class JobSherpaAgent:
+```
+
+**Chunk 3**
+Lines added: 2, lines removed: undefined
+
+```diff
+@@ -31,8 +34,10 @@
+          self.tracker = JobStateTracker()
+          self.rag_pipeline = self._initialize_rag_pipeline()
++         logger.info("JobSherpaAgent initialized.")
+  
+      def start(self):
+          """Starts the agent's background threads."""
+          self.tracker.start_monitoring()
++         logger.info("Agent background monitoring started.")
+  
+      def check_jobs(self):
+```
+
+**Chunk 4**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -43,4 +48,5 @@
+          """Stops the agent's background threads."""
+          self.tracker.stop_monitoring()
++         logger.info("Agent background monitoring stopped.")
+  
+      def get_job_status(self, job_id: str) -> Optional[str]:
+```
+
+**Chunk 5**
+Lines added: 3, lines removed: undefined
+
+```diff
+@@ -52,4 +58,7 @@
+          recipes = {}
+          app_dir = os.path.join(self.knowledge_base_dir, "applications")
++         if not os.path.isdir(app_dir):
++             logger.warning("Applications directory not found at: %s", app_dir)
++             return {}
+          for filename in os.listdir(app_dir):
+              if filename.endswith(".yaml"):
+```
+
+**Chunk 6**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -65,4 +74,5 @@
+          
+          system_file = os.path.join(self.knowledge_base_dir, "system", f"{profile_name}.yaml")
++         logger.debug("Loading system profile from: %s", system_file)
+          if os.path.exists(system_file):
+              with open(system_file, 'r') as f:
+```
+
+**Chunk 7**
+Lines added: 4, lines removed: undefined
+
+```diff
+@@ -76,4 +86,8 @@
+          # Index all application recipes
+          app_dir = os.path.join(self.knowledge_base_dir, "applications")
++         if not os.path.isdir(app_dir):
++             logger.warning("Applications directory not found for RAG indexing: %s", app_dir)
++             return Pipeline() # Return empty pipeline
++ 
+          docs = []
+          for filename in os.listdir(app_dir):
+```
+
+**Chunk 8**
+Lines added: 2, lines removed: 1
+
+```diff
+@@ -86,5 +100,6 @@
+                      docs.append(doc)
+          
+-         document_store.write_documents(docs)
++         if docs:
++             document_store.write_documents(docs)
+          
+          retriever = BM25Retriever(document_store=document_store)
+```
+
+**Chunk 9**
+Lines added: 7, lines removed: 2
+
+```diff
+@@ -113,16 +128,21 @@
+          Returns a user-facing response string and an optional job ID.
+          """
+-         print(f"Agent received prompt: {prompt}")
++         logger.info("Agent received prompt: '%s'", prompt)
+  
+          recipe = self._find_matching_recipe(prompt)
+  
+          if not recipe:
++             logger.warning("No matching recipe found for prompt.")
+              return "Sorry, I don't know how to handle that.", None
+- 
++         
++         logger.debug("Found matching recipe: %s", recipe["name"])
++ 
+          # Check if the recipe uses a template
+          if "template" in recipe:
+              template_name = recipe["template"]
+              template_args = recipe.get("template_args", {})
+              
++             logger.info("Rendering script from template: %s", template_name)
++ 
+              # Create a Jinja2 environment
+              template_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'tools')
+```
+
+**Chunk 10**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -132,4 +152,5 @@
+                  template = env.get_template(template_name)
+                  rendered_script = template.render(template_args)
++                 logger.debug("Rendered script content:\n%s", rendered_script)
+                  
+                  # The "tool" in a templated recipe is the command to pipe the script to
+```
+
+**Chunk 11**
+Lines added: 2, lines removed: undefined
+
+```diff
+@@ -142,6 +163,8 @@
+  
+              except jinja2.TemplateNotFound:
++                 logger.error("Template '%s' not found in tools directory.", template_name)
+                  return f"Error: Template '{template_name}' not found.", None
+              except Exception as e:
++                 logger.error("Error rendering template: %s", e, exc_info=True)
+                  return f"Error rendering template: {e}", None
+          else:
+```
+
+**Chunk 12**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -152,4 +175,5 @@
+              
+              args = recipe.get('args', [])
++             logger.debug("Executing non-templated tool: %s with args: %s", tool_name, args)
+              execution_result = self.tool_executor.execute(tool_name, args)
+  
+```
+
+**Chunk 13**
+Lines added: 2, lines removed: undefined
+
+```diff
+@@ -159,7 +183,9 @@
+              output_parser = recipe.get("output_parser")
+              self.tracker.register_job(job_id, output_parser_info=output_parser)
++             logger.info("Job %s submitted successfully.", job_id)
+              response = f"Found recipe '{recipe['name']}'.\nJob submitted successfully with ID: {job_id}"
+              return response, job_id
+  
++         logger.info("Execution finished, but no job ID was parsed.")
+          response = f"Found recipe '{recipe['name']}'.\nExecution result: {execution_result}"
+          return response, None
+```
+
+</details>
+
+---
+
+Next, I will add logging to the `ToolExecutor`. This is where the error is happening, so it's critical to have good visibility here. I will add:
+*   A `DEBUG` message showing the exact command and arguments being executed.
+*   A `DEBUG` message showing the `stdin` content if it's provided.
+*   An `ERROR` message when a command fails, capturing the `stdout` and `stderr` from the failed process. This is the key to solving our current problem.
+
+---
+
+<details><summary>Edit file: jobsherpa/agent/tool_executor.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 3, lines removed: undefined
+
+```diff
+@@ -1,5 +1,8 @@
+  import subprocess
+  import os
++ import logging
+  from typing import Optional
++ 
++ logger = logging.getLogger(__name__)
+  
+  class ToolExecutor:
+```
+
+**Chunk 2**
+Lines added: 3, lines removed: 1
+
+```diff
+@@ -25,5 +28,7 @@
+              command = [tool_name] + args
+  
+-         print(f"ToolExecutor received command: {' '.join(command)}")
++         logger.debug("Executing command: %s", " ".join(command))
++         if script_content:
++             logger.debug("Passing stdin to command:\n%s", script_content)
+  
+          if self.dry_run:
+```
+
+**Chunk 3**
+Lines added: 9, lines removed: 1
+
+```diff
+@@ -40,6 +45,14 @@
+                  input=script_content
+              )
++             logger.debug("Command successful. stdout: %s", result.stdout)
+              return result.stdout
+-         except (subprocess.CalledProcessError, FileNotFoundError) as e:
++         except subprocess.CalledProcessError as e:
++             logger.error(
++                 "Error executing tool '%s'. Return code: %s\n---STDOUT---\n%s\n---STDERR---\n%s",
++                 " ".join(command), e.returncode, e.stdout, e.stderr
++             )
++             return f"Error executing tool: {e}"
++         except FileNotFoundError as e:
++             logger.error("Error executing tool '%s'. File not found.", " ".join(command))
+              return f"Error executing tool: {e}"
+  
+```
+
+</details>
+
+---
+
+Finally, I'll add some logging to the `JobStateTracker` to give us visibility into the job monitoring process. This will include:
+*   `INFO` messages when a job is registered or its status changes.
+*   `DEBUG` messages for the raw `squeue` and `sacct` output.
+*   `INFO` when output parsing begins.
+*   `DEBUG` showing the result of the regex match.
+*   `WARNING` messages for file-not-found or parsing errors.
+
+---
+
+<details><summary>Edit file: jobsherpa/agent/job_state_tracker.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 3, lines removed: undefined
+
+```diff
+@@ -3,5 +3,8 @@
+  import subprocess
+  import re
++ import logging
+  from typing import Optional
++ 
++ logger = logging.getLogger(__name__)
+  
+  class JobStateTracker:
+```
+
+**Chunk 2**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -27,4 +30,5 @@
+                  "result": None
+              }
++             logger.info("Registered new job: %s", job_id)
+  
+      def get_status(self, job_id: str) -> Optional[str]:
+```
+
+**Chunk 3**
+Lines added: 2, lines removed: undefined
+
+```diff
+@@ -39,4 +43,6 @@
+          """
+          if job_id in self._jobs:
++             if self._jobs[job_id]["status"] != status:
++                 logger.info("Job %s status changed to: %s", job_id, status)
+              self._jobs[job_id]["status"] = status
+              if status == "COMPLETED" and self._jobs[job_id]["output_parser"]:
+```
+
+**Chunk 4**
+Lines added: 1, lines removed: 1
+
+```diff
+@@ -45,5 +51,5 @@
+      def get_result(self, job_id: str) -> Optional[str]:
+          """Gets the parsed result of a completed job."""
+-         return self._jobs.get(job_id, {}).get("result")
++         return self._jobs[job_id].get("result") if job_id in self._jobs else None
+  
+      def _parse_job_output(self, job_id: str):
+```
+
+**Chunk 5**
+Lines added: 2, lines removed: undefined
+
+```diff
+@@ -58,6 +64,8 @@
+  
+          if not output_file or not regex:
++             logger.warning("Job %s is missing 'file' or 'parser_regex' in its output_parser info.", job_id)
+              return
+  
++         logger.info("Parsing output file '%s' for job %s", output_file, job_id)
+          try:
+              with open(output_file, 'r') as f:
+```
+
+**Chunk 6**
+Lines added: 7, lines removed: 3
+
+```diff
+@@ -66,9 +74,13 @@
+              match = re.search(regex, content)
+              if match:
+-                 self._jobs[job_id]["result"] = match.group(1)
++                 result = match.group(1)
++                 self._jobs[job_id]["result"] = result
++                 logger.debug("Successfully parsed result for job %s: %s", job_id, result)
++             else:
++                 logger.warning("Regex did not find a match in output file for job %s", job_id)
+          except FileNotFoundError:
+-             print(f"Warning: Could not find output file {output_file} to parse for job {job_id}.")
++             logger.warning("Could not find output file %s to parse for job %s.", output_file, job_id)
+          except Exception as e:
+-             print(f"Warning: Error parsing file {output_file} for job {job_id}: {e}")
++             logger.warning("Error parsing file %s for job %s: %s", output_file, job_id, e, exc_info=True)
+  
+      def _parse_squeue_status(self, squeue_output: str, job_id: str) -> Optional[str]:
+```
+
+**Chunk 7**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -125,4 +137,5 @@
+                          text=True,
+                      )
++                     logger.debug("squeue output for job %s:\n%s", job_id, squeue_result.stdout)
+                      new_status = self._parse_squeue_status(squeue_result.stdout, job_id)
+                      
+```
+
+**Chunk 8**
+Lines added: 2, lines removed: 1
+
+```diff
+@@ -136,9 +149,10 @@
+                              text=True,
+                          )
++                         logger.debug("sacct output for job %s:\n%s", job_id, sacct_result.stdout)
+                          final_status = self._parse_sacct_status(sacct_result.stdout, job_id)
+                          if final_status:
+                              self.set_status(job_id, final_status)
+                  except FileNotFoundError:
+-                     print("Warning: SLURM commands not found. Cannot check job status.")
++                     logger.error("SLURM commands (squeue, sacct) not found. Cannot check job status.")
+                      break
+  
+```
+
+</details>
+
+---
+
+The logging infrastructure is now in place. I have instrumented all the major components of our application.
+
+This is a good point to commit these changes before you test again on the HPC system.
+
+---
+
+```bash
+git add . && git commit -m "feat: Implement logging infrastructure" -m "Adds a comprehensive logging infrastructure using Python's standard 'logging' module." -m "- CLI is updated with '--verbose' and '--debug' flags to control log verbosity." -m "- All core components (Agent, ToolExecutor, JobStateTracker) are instrumented with INFO, DEBUG, and ERROR level logging." -m "- Failed command executions now log the stdout and stderr, providing critical debugging information."
+```
+
+```
+
+[main 1180d2f] feat: Implement logging infrastructure
+ 5 files changed, 1298 insertions(+), 13 deletions(-)
+```
+
+---
+
+The logging feature has been committed.
+
+Now, please pull the latest changes on your HPC system and rerun the command, but this time with the `--debug` flag. The output will be much more verbose, and critically, it will show us the standard error from the `sbatch` command, which should tell us exactly why it's failing.
+
+The command to run is:
+```bash
+jobsherpa --system-profile vista --debug "Generate a random number for me"
+```
+
+I'll be ready to analyze the output.
+
+---
+
+_**User**_
+
+here is the output of the debug. it is very informative. the missing partition option for our job script brings up an interesting boundary between user specific data and system specific data. a system like frontera have many queues/partitions available and this may be worth storing in the system knowledge base. however which specific queue to use for a given job is defined by the user's needs. not the system definition. and highlights the needs for the user centric component of the RAG. we need to be able to converse with the user, capture which partition they want to use as well as which allocation to use (as users are billed for usage from an allocation which must be provided in the job script) 
+
+lets think about how to tackle this to get our simple random number generator job to run successfully but also work towards a fully featured project. 
+
+---
+
+_**Assistant**_
+
+<think><details><summary>Thought Process</summary>
+**Assessing the Error**
+
+The debug output is top-notch, showcasing flawless logging. However, the issue boils down to a `sbatch` failure. Specifically, the command choked because the queue name wasn't provided using the `-p` flag.
+
+
+**Addressing User Preferences**
+
+I've thoroughly reviewed the debug output, and the logging is indeed excellent. The `sbatch` command failed, mirroring the user's issue, because the `-p` flag for the queue name was missing. My analysis focuses on the distinction between system-level data (available queues) and user-level choices (partition, allocation). This highlights the necessity of a `User Memory DB`, a conversational approach, and the agent's ability to solicit missing information. This calls for a multi-step plan.
+
+
+**Formulating a Strategy**
+
+I've thoroughly analyzed the debug output and the user's feedback. I see the `sbatch` command error, missing the `-p` flag, mirrors the user's challenge, as before. The key lies in separating system knowledge (available partitions) from user preferences (chosen partition and account). This necessitates a `User Memory DB` and conversational ability. My immediate focus is on refining the knowledge base to distinguish between mandatory and optional parameters. Then, I'll implement a simple user configuration for the random number generator.
+
+
+**Developing a Foundation**
+
+I've confirmed the user's points regarding system versus user knowledge. A "User Memory DB" and conversational capabilities are still the ultimate goal. I'm refining the short-term plan. My next step is to enhance the knowledge base schema, starting with system and user profiles. I'll define required job parameters and user defaults. This will be followed by agent logic updates to merge contexts from these profiles.
+
+
+**Refining the Implementation**
+
+I've reviewed the debug output and the user's analysis. The problem, as before, is the `sbatch` failure due to a missing queue, highlighting the separation between system information and user preferences. My focus is on a pragmatic solution: a user configuration file, which will be a stepping stone toward a full user memory database. I'm ready to begin updating the knowledge base schema, agent logic, templates, and tests, incorporating a new `--user-profile` option.
+
+
+**Detailing the Next Steps**
+
+I've reviewed the user's comments and fine-tuned the strategy, focusing on the `sbatch` failure. My plan is to implement a user-specific configuration file. I've listed a series of steps, including updating the knowledge base schema, updating the agent logic to merge contexts, modifying the template, and updating the CLI and tests. My immediate task is to explain the plan to the user and update the documentation. After this, I'll choose between "vista" and "frontera" or create a new file, and begin implementing the user profile.
+
+
+**Formulating the Approach**
+
+I've reviewed the user's analysis and the debugging output. The root issue remains the `sbatch` failure, caused by the missing partition flag. A user configuration file will be the initial approach, and a user memory database will be the longer-term strategy. My focus is now on creating `vista.yaml` and `mcawood.yaml` user profile files, then updating the Jinja2 template. After updating the CLI, tests, and agent, I'll ensure everything functions as expected. I'll confirm with the user regarding which system to use.
+
+
+</details></think>
+
+---
+
+
+
+This is a fantastic insight, and you've perfectly articulated a core challenge in making an agent like this truly useful. The debug output did its job beautifully, and your analysis is spot on.
+
+You're right:
+*   The **list of available partitions** is system knowledge.
+*   The **choice of which partition and allocation/account to use** is user/job-specific knowledge.
+
+This boundary is where the agent needs to become more intelligent. The long-term vision is a conversational flow where the agent can ask you for this missing information. However, we can build a foundational piece of that system *right now* to solve the immediate problem and pave the way for future enhancements.
+
+### The Plan: Introduce User and System Profiles
+
+Here is my proposed plan to get your job running and build out this new capability:
+
+1.  **Formalize System Requirements:** We'll enhance the system profile (e.g., `knowledge_base/system/vista.yaml`) to not only list available partitions but also to explicitly state which parameters are *required* for a job submission (like `partition` and `account`).
+
+2.  **Create a User Profile:** We'll create a new file, `knowledge_base/user/mcawood.yaml`, to act as a simple "user memory." This file will store your personal defaults, such as your preferred partition and allocation ID.
+
+3.  **Update the Agent's Logic:** The agent will be refactored to:
+    a. Load the system profile and the new user profile.
+    b. When preparing a job, it will merge the context from three sources: the application recipe's arguments, your user profile's defaults, and finally any system-wide defaults.
+    c. It will use this combined context to render the Jinja2 template, filling in the partition and account details.
+
+4.  **Update the CLI:** We'll add a `--user-profile` option to the `jobsherpa` command so you can specify your configuration.
+
+This approach solves the immediate `sbatch` error by providing the missing parameters, while also creating the mechanism for the agent to use user-specific knowledge—a crucial step toward the more advanced conversational features we've discussed.
+
+If you agree with this plan, I will start by creating the new `vista.yaml` system profile and the `mcawood.yaml` user profile.
+
+---
+
+_**User**_
+
+yes lets proceed
+
+---
+
+_**Assistant**_
+
+<think><details><summary>Thought Process</summary>
+**Implementing the Plan**
+
+I'm focused on executing the plan to resolve the partition issue. The first concrete step is underway: creating the `vista.yaml` system profile. This initial definition will outline available partitions and job requirements, laying the groundwork for the user and system profile integration.
+
+
+**Initiating the Files**
+
+I'm now focused on creating the initial YAML files. I've determined the need to create the `vista.yaml` file, which is the first major step. I'm going to store the system's scheduler commands, partition data, and argument requirements, establishing the essential system knowledge. Before that I will create `knowledge_base/user` if it does not exist.
+
+
+</details></think>
+
+---
+
+
+
+Excellent. I will start by creating the new `vista.yaml` system profile. This file will formalize the system's requirements, specifying not just the scheduler commands but also which job parameters are mandatory, like `partition` and `account`. This captures the "system-specific" knowledge we discussed.
+
+---
+
+<details><summary>Edit file: knowledge_base/system/vista.yaml</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 14, lines removed: 1
+
+```diff
+@@ -1,1 +1,14 @@
+- 
++ name: Vista
++ scheduler: slurm
++ description: A hypothetical SLURM cluster that requires partition and account for all jobs.
++ commands:
++   submit: sbatch
++   status: squeue
++   history: sacct
++ job_requirements:
++   - partition
++   - account
++ available_partitions:
++   - development
++   - compute
++   - gpu
+```
+
+</details>
+
+---
+
+Next, I'll create the `user` directory and your user profile, `knowledge_base/user/mcawood.yaml`. This file will store your personal default values for the parameters required by the Vista system. This captures the "user-specific" knowledge.
+
+---
+
+<details><summary>Edit file: knowledge_base/user/mcawood.yaml</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 5, lines removed: 1
+
+```diff
+@@ -1,1 +1,5 @@
+- 
++ # User profile for mcawood
++ # This file stores default values for job submissions.
++ defaults:
++   partition: "development"
++   account: "TACC-12345"
+```
+
+</details>
+
+---
+
+Now I will update our Jinja2 template, `tools/random_number.sh.j2`, to include placeholders for the new `partition` and `account` parameters. This will allow the agent to inject the values from the user and system profiles directly into the job script.
+
+---
+
+<details><summary>Edit file: tools/random_number.sh.j2</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 2, lines removed: undefined
+
+```diff
+@@ -5,4 +5,6 @@
+  #SBATCH --job-name={{ job_name }}
+  #SBATCH --output={{ output_file }}
++ #SBATCH --partition={{ partition }}
++ #SBATCH --account={{ account }}
+  #SBATCH --nodes=1
+  #SBATCH --ntasks-per-node=1
+```
+
+</details>
+
+---
+
+Now for the "Red" phase. I will write a new test, `test_agent_merges_user_and_system_profiles`, to assert that the agent:
+1.  Loads a user profile and a system profile.
+2.  Merges the `template_args` from the recipe with the `defaults` from the user profile.
+3.  Renders the template using this combined context.
+4.  The final rendered script contains the `partition` and `account` from the user profile.
+
+This test will fail because the agent doesn't yet have any logic for loading or using user profiles.
+
+---
+
+<details><summary>Edit file: tests/test_agent.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 41, lines removed: undefined
+
+```diff
+@@ -210,3 +210,44 @@
+              assert agent.get_job_result(job_id) == random_number
+              mock_file.assert_called_with(output_filename, 'r')
++ 
++ def test_agent_merges_user_and_system_profiles():
++     """
++     Tests that the agent can load a user profile and a system profile,
++     merge their values with the recipe's arguments, and render a
++     complete job script.
++     """
++     agent = JobSherpaAgent(
++         dry_run=False,
++         system_profile="vista",
++         user_profile="mcawood"
++     )
++     
++     # Mock the RAG pipeline
++     with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
++         mock_document = MagicMock()
++         mock_document.meta = {
++             "name": "random_number_generator",
++             "template": "random_number.sh.j2",
++             "template_args": {
++                 "job_name": "test-rng-job",
++                 "output_file": "test_output.txt"
++             },
++             "tool": "submit"
++         }
++         mock_pipeline_run.return_value = {"documents": [mock_document]}
++         
++         # Mock subprocess.run to inspect the final script
++         with patch("subprocess.run") as mock_subprocess:
++             mock_subprocess.return_value = MagicMock(stdout="Submitted batch job mock_123")
++             agent.run("Generate a random number")
++             
++             # Check the stdin passed to the sbatch command
++             rendered_script = mock_subprocess.call_args.kwargs["input"]
++             
++             # Assert that values from the user profile were merged and rendered
++             assert "#SBATCH --partition=development" in rendered_script
++             assert "#SBATCH --account=TACC-12345" in rendered_script
++             
++             # Assert that values from the recipe were also rendered
++             assert "#SBATCH --job-name=test-rng-job" in rendered_script
+  
+```
+
+</details>
+
+---
+
+Now, let's run `pytest` to see our new test fail.
+
+---
+
+```bash
+/Users/mcawood/dev/JobSherpa/.venv/bin/pytest
+```
+
+```
+
+=============================================================== test session starts ================================================================
+platform darwin -- Python 3.13.3, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/mcawood/dev/JobSherpa
+configfile: pyproject.toml
+plugins: anyio-4.10.0, typeguard-4.4.4
+collected 13 items                                                                                                                                 
+
+tests/test_agent.py .......F                                                                                                                 [ 61%]
+tests/test_job_state_tracker.py ....                                                                                                         [ 92%]
+tests/test_tool_executor.py .                                                                                                                [100%]
+
+===================================================================== FAILURES =====================================================================
+____________________________________________________ test_agent_merges_user_and_system_profiles ____________________________________________________
+
+    def test_agent_merges_user_and_system_profiles():
+        """
+        Tests that the agent can load a user profile and a system profile,
+        merge their values with the recipe's arguments, and render a
+        complete job script.
+        """
+>       agent = JobSherpaAgent(
+            dry_run=False,
+            system_profile="vista",
+            user_profile="mcawood"
+        )
+E       TypeError: JobSherpaAgent.__init__() got an unexpected keyword argument 'user_profile'. Did you mean 'system_profile'?
+
+tests/test_agent.py:219: TypeError
+================================================================= warnings summary =================================================================
+.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12
+  /Users/mcawood/dev/JobSherpa/.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12: UserWarning: pkg_resources is deprecated as an API. S
+ee https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from usi
+ng this package or pin to Setuptools<81.
+
+    import pkg_resources
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================================================= short test summary info ==============================================================
+FAILED tests/test_agent.py::test_agent_merges_user_and_system_profiles - TypeError: JobSherpaAgent.__init__() got an unexpected keyword argument 'us
+er_profile'. Did you mean 'system_profile'?
+
+===================================================== 1 failed, 12 passed, 1 warning in 4.35s ======================================================
+```
+
+---
+
+Perfect. The `TypeError: ... unexpected keyword argument 'user_profile'` is exactly the failure we need to establish our "Red" state.
+
+Now for the "Green" phase. I will refactor the `JobSherpaAgent` and the CLI to make this test pass.
+
+1.  **Update `JobSherpaAgent.__init__`**: Add `user_profile` as an argument and add a new `_load_user_config` method.
+2.  **Update `JobSherpaAgent.run`**: Implement the core logic to merge the
+
+---
+

@@ -1,0 +1,5 @@
+# User profile for mcawood
+# This file stores default values for job submissions.
+defaults:
+  partition: "development"
+  account: "TACC-12345"
