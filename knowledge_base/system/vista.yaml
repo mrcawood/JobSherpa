@@ -7,8 +7,7 @@ commands:
   history: sacct
 job_requirements:
   - partition
-  - account
+  - allocation
 available_partitions:
-  - development
-  - compute
-  - gpu
+  - gh-dev
+  - gg 

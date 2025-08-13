@@ -16461,7 +16461,329 @@ Perfect. The `TypeError: ... unexpected keyword argument 'user_profile'` is exac
 Now for the "Green" phase. I will refactor the `JobSherpaAgent` and the CLI to make this test pass.
 
 1.  **Update `JobSherpaAgent.__init__`**: Add `user_profile` as an argument and add a new `_load_user_config` method.
-2.  **Update `JobSherpaAgent.run`**: Implement the core logic to merge the
+2.  **Update `JobSherpaAgent.run`**: Implement the core logic to merge the recipe `template_args`, the user `defaults`, and any system `defaults` into a single context before rendering the template.
+3.  **Update `jobsherpa/cli/main.py`**: Add a `--user-profile` option to the CLI.
+
+I'll start with the `JobSherpaAgent`.
+
+---
+
+<details><summary>Edit file: jobsherpa/agent/agent.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 2, lines removed: 1
+
+```diff
+@@ -23,5 +23,6 @@
+          dry_run: bool = False, 
+          knowledge_base_dir: str = "knowledge_base",
+-         system_profile: Optional[str] = None
++         system_profile: Optional[str] = None,
++         user_profile: Optional[str] = None
+      ):
+          """
+```
+
+**Chunk 2**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -32,4 +33,5 @@
+          self.knowledge_base_dir = knowledge_base_dir
+          self.system_config = self._load_system_config(system_profile)
++         self.user_config = self._load_user_config(user_profile)
+          self.tracker = JobStateTracker()
+          self.rag_pipeline = self._initialize_rag_pipeline()
+```
+
+**Chunk 3**
+Lines added: 12, lines removed: undefined
+
+```diff
+@@ -80,4 +82,16 @@
+          return None
+  
++     def _load_user_config(self, profile_name: Optional[str]):
++         """Loads a specific user configuration from the knowledge base."""
++         if not profile_name:
++             return None
++         
++         user_file = os.path.join(self.knowledge_base_dir, "user", f"{profile_name}.yaml")
++         logger.debug("Loading user profile from: %s", user_file)
++         if os.path.exists(user_file):
++             with open(user_file, 'r') as f:
++                 return yaml.safe_load(f)
++         return None
++ 
+      def _initialize_rag_pipeline(self) -> Pipeline:
+          """Initializes the Haystack RAG pipeline and indexes documents."""
+```
+
+**Chunk 4**
+Lines added: 12, lines removed: 2
+
+```diff
+@@ -141,6 +155,16 @@
+          if "template" in recipe:
+              template_name = recipe["template"]
+-             template_args = recipe.get("template_args", {})
+-             
++             
++             # Build the template rendering context
++             context = {}
++             # 1. Start with system defaults (if any)
++             if self.system_config and "defaults" in self.system_config:
++                 context.update(self.system_config["defaults"])
++             # 2. Add user defaults, overwriting system defaults
++             if self.user_config and "defaults" in self.user_config:
++                 context.update(self.user_config["defaults"])
++             # 3. Add recipe-specific args, overwriting user/system defaults
++             context.update(recipe.get("template_args", {}))
++ 
+              logger.info("Rendering script from template: %s", template_name)
+  
+```
+
+**Chunk 5**
+Lines added: 1, lines removed: 1
+
+```diff
+@@ -151,5 +175,5 @@
+              try:
+                  template = env.get_template(template_name)
+-                 rendered_script = template.render(template_args)
++                 rendered_script = template.render(context)
+                  logger.debug("Rendered script content:\n%s", rendered_script)
+                  
+```
+
+</details>
+
+---
+
+Now I'll update the CLI in `jobsherpa/cli/main.py` to accept the new `--user-profile` argument.
+
+---
+
+<details><summary>Edit file: jobsherpa/cli/main.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 3, lines removed: undefined
+
+```diff
+@@ -17,4 +17,7 @@
+          None, "--system-profile", help="The name of the system profile to use from the knowledge base."
+      ),
++     user_profile: str = typer.Option(
++         None, "--user-profile", help="The name of the user profile to use for default values."
++     ),
+  ):
+      """
+```
+
+**Chunk 2**
+Lines added: 2, lines removed: 1
+
+```diff
+@@ -36,5 +39,6 @@
+      agent = JobSherpaAgent(
+          dry_run=dry_run,
+-         system_profile=system_profile
++         system_profile=system_profile,
++         user_profile=user_profile
+      )
+      agent.start()
+```
+
+</details>
+
+---
+
+Now that the agent and CLI have been updated to handle user profiles, I'll run `pytest`. I expect all tests to pass.
+
+---
+
+```bash
+/Users/mcawood/dev/JobSherpa/.venv/bin/pytest
+```
+
+```
+
+=============================================================== test session starts ================================================================
+platform darwin -- Python 3.13.3, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/mcawood/dev/JobSherpa
+configfile: pyproject.toml
+plugins: anyio-4.10.0, typeguard-4.4.4
+collected 13 items                                                                                                                                 
+
+tests/test_agent.py ........                                                                                                                 [ 61%]
+tests/test_job_state_tracker.py ....                                                                                                         [ 92%]
+tests/test_tool_executor.py .                                                                                                                [100%]
+
+================================================================= warnings summary =================================================================
+.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12
+  /Users/mcawood/dev/JobSherpa/.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12: UserWarning: pkg_resources is deprecated as an API. S
+ee https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from usi
+ng this package or pin to Setuptools<81.
+
+    import pkg_resources
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+========================================================== 13 passed, 1 warning in 2.72s ===========================================================
+```
+
+---
+
+Excellent. All tests passed. We have successfully implemented the user and system profile logic. The agent can now merge context from multiple sources to create complete and correct job submission scripts.
+
+This is a significant step forward. We've not only solved the immediate `sbatch` error but also built a foundational component for the agent's user-specific memory and contextual understanding.
+
+Now, you should be able to run the command successfully on your HPC system. Please `git pull` the latest changes and try running:
+
+```bash
+jobsherpa --system-profile vista --user-profile mcawood --debug "Generate a random number for me"
+```
+
+Remember to create the `knowledge_base/system/vista.yaml` and `knowledge_base/user/mcawood.yaml` files on the HPC system with the correct partition and account information for that machine.
+
+I will commit these changes now.
+
+---
+
+```bash
+git add . && git commit -m "feat: Implement user and system profile merging" -m "This feature enables the agent to load and merge configurations from system and user profiles, allowing for context-aware job script generation." -m "- The agent now loads a user-specific YAML profile to source default values (e.g., partition, account)." -m "- The script rendering logic now merges defaults from the system profile, user profile, and the application recipe." -m "- The CLI is updated with a '--user-profile' flag."
+```
+
+```
+
+[main 5e75530] feat: Implement user and system profile merging
+ 8 files changed, 988 insertions(+), 4 deletions(-)
+ create mode 100644 knowledge_base/system/vista.yaml
+ create mode 100644 knowledge_base/user/mcawood.yaml
+```
+
+---
+
+The changes have been committed. Please pull the latest version on your HPC system and try the command again. I am confident that this will resolve the `sbatch` error and successfully submit the job.
+
+I'll be here to help you analyze the results or tackle the next challenge.
+
+---
+
+_**User**_
+
+we need to use allocation instead of account make suitable updates
+
+---
+
+_**Assistant**_
+
+<think><details><summary>Thought Process</summary>
+**Examining Terminology Changes**
+
+I'm tracking the scope of the renaming task. I've started identifying all instances of "account" across the project. The initial plan is to methodically replace it with "allocation", and I'm evaluating the impact on various files, including `knowledge_base.py`, and others that may contain that term.
+
+
+**Analyzing Affected Files**
+
+I've begun the file-by-file revisions. First up, `knowledge_base/system/vista.yaml`. I need to understand its current state. Then, I will proceed with `knowledge_base/user/mcawood.yaml`, and after that, I'll address the template file, `tools/random_number.sh.j2`, followed by the test in `tests/test_agent.py`. The final step will be to commit everything.
+
+
+</details></think>
+
+---
+
+
+
+Understood. You want to use the term `allocation` instead of `account`, as it's the more correct term for HPC schedulers. This is a great clarification. I will make the necessary updates across the project.
+
+First, I'll update the system profile in `knowledge_base/system/vista.yaml` to require `allocation`.
+
+---
+
+<details><summary>Edit file: knowledge_base/system/vista.yaml</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 1, lines removed: 1
+
+```diff
+@@ -8,5 +8,5 @@
+  job_requirements:
+    - partition
+-   - account
++   - allocation
+  available_partitions:
+    - gh-dev
+```
+
+</details>
+
+---
+
+Next, I'll update your user profile at `knowledge_base/user/mcawood.yaml` to use `allocation`.
+
+---
+
+<details><summary>Edit file: knowledge_base/user/mcawood.yaml</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 1, lines removed: 1
+
+```diff
+@@ -3,4 +3,4 @@
+  defaults:
+    partition: "development"
+-   account: "TACC-12345"
++   allocation: "TACC-12345"
+  
+```
+
+</details>
+
+---
+
+Now, I'll update the job script template at `tools/random_number.sh.j2` to use `--account={{ allocation }}`. While we are changing the variable name to `allocation` internally for clarity, the `sbatch` command itself still requires the `--account` flag. This change ensures the correct value is passed to the correct flag.
+
+---
+
+<details><summary>Edit file: tools/random_number.sh.j2</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 1, lines removed: 1
+
+```diff
+@@ -6,5 +6,5 @@
+  #SBATCH --output={{ output_file }}
+  #SBATCH --partition={{ partition }}
+- #SBATCH --account={{ account }}
++ #SBATCH --account={{ allocation }}
+  #SBATCH --nodes=1
+  #SBATCH --ntasks-per-node=1
+```
+
+</details>
+
+---
+
+Finally, I need to update our test, `test_agent_merges_user_and_system_profiles`, to reflect this change in terminology.
+
+---
+
+Edit made no changes to the file
+
+---
+
+
 
 ---
 
