@@ -1,0 +1,11 @@
+[project]
+name = "jobsherpa"
+version = "0.1.0"
+description = "An AI agent for HPC systems."
+authors = [{ name = "Your Name", email = "you@example.com" }]
+dependencies = [
+    "typer[all]",
+]
+
+[project.scripts]
+jobsherpa = "jobsherpa.cli.main:run_app"

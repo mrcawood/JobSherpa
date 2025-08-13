@@ -1,0 +1,12 @@
+pyproject.toml
+jobsherpa/__init__.py
+jobsherpa.egg-info/PKG-INFO
+jobsherpa.egg-info/SOURCES.txt
+jobsherpa.egg-info/dependency_links.txt
+jobsherpa.egg-info/entry_points.txt
+jobsherpa.egg-info/requires.txt
+jobsherpa.egg-info/top_level.txt
+jobsherpa/agent/__init__.py
+jobsherpa/agent/agent.py
+jobsherpa/cli/__init__.py
+jobsherpa/cli/main.py
