@@ -6,12 +6,18 @@ def main(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Run in dry-run mode without executing real commands."
     ),
+    system_profile: str = typer.Option(
+        None, "--system-profile", help="The name of the system profile to use from the knowledge base."
+    ),
 ):
     """
     Run the JobSherpa agent with a specific prompt.
     """
     print("CLI is running...")
-    agent = JobSherpaAgent(dry_run=dry_run)
+    agent = JobSherpaAgent(
+        dry_run=dry_run,
+        system_profile=system_profile
+    )
     agent.start()
     response, job_id = agent.run(prompt)
     print("CLI received response:")
