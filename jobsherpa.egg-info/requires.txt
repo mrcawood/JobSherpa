@@ -1,1 +1,12 @@
 typer[all]
+PyYAML
+farm-haystack
+setuptools
+Jinja2
+
+[inference]
+farm-haystack[inference]
+
+[test]
+pytest
+freezegun

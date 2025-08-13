@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 jobsherpa/__init__.py
 jobsherpa.egg-info/PKG-INFO
@@ -8,5 +9,10 @@ jobsherpa.egg-info/requires.txt
 jobsherpa.egg-info/top_level.txt
 jobsherpa/agent/__init__.py
 jobsherpa/agent/agent.py
+jobsherpa/agent/job_state_tracker.py
+jobsherpa/agent/tool_executor.py
 jobsherpa/cli/__init__.py
 jobsherpa/cli/main.py
+tests/test_agent.py
+tests/test_job_state_tracker.py
+tests/test_tool_executor.py
