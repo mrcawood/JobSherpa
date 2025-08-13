@@ -1,0 +1,7 @@
+name: generic_hello
+description: A generic application that uses the system's submit command.
+keywords:
+  - generic hello
+tool: submit # This is a generic command, not a script name
+args:
+  - "--wrap='echo Generic Hello'"

@@ -1,0 +1,13 @@
+name: random_number_generator
+description: A simple application that generates a random number.
+keywords:
+  - random number
+  - rng
+template: random_number.sh.j2
+template_args:
+  job_name: "random-number-job"
+  output_file: "rng_output.txt"
+tool: "submit" # The agent will submit the *rendered* script
+output_parser:
+  file: "{{ output_file }}" # Use the same output_file from template_args
+  parser_regex: '(\d+)'

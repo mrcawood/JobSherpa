@@ -5,7 +5,25 @@ description = "An AI agent for HPC systems."
 authors = [{ name = "Your Name", email = "you@example.com" }]
 dependencies = [
     "typer[all]",
+    "PyYAML",
+    "farm-haystack",
+    "setuptools",
+    "Jinja2",
 ]
 
 [project.scripts]
 jobsherpa = "jobsherpa.cli.main:run_app"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "freezegun",
+]
+inference = [
+    "farm-haystack[inference]",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["jobsherpa*"]
+exclude = ["tests*"]

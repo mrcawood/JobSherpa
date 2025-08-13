@@ -1,0 +1,14 @@
+#!/bin/bash
+#
+# This is a dynamically generated script for a random number job.
+#
+#SBATCH --job-name={{ job_name }}
+#SBATCH --output={{ output_file }}
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --time=00:01:00
+
+# Generate a random number and write it to the output file
+echo "Generating a random number..."
+echo $RANDOM > {{ output_file }}
+echo "Random number generation complete."

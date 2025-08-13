@@ -1,0 +1,10 @@
+name: hello_world
+description: A simple application that prints hello world.
+keywords:
+  - hello world
+  - test
+tool: submit_job.sh
+args:
+  - "--job-name=hello_world"
+  - "--nodes=1"
+  - "--wrap='echo Hello World'"

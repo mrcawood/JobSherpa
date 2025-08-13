@@ -1,0 +1,7 @@
+name: MockSlurmSystem
+scheduler: slurm
+description: A mock system that pretends to be a Slurm cluster.
+commands:
+  submit: sbatch
+  status: squeue
+  history: sacct
