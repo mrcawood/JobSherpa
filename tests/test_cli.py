@@ -4,8 +4,9 @@ import yaml
 import os
 
 from jobsherpa.cli.main import app # We need to import the app object
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import getpass
+import jinja2
 
 runner = CliRunner()
 
@@ -134,3 +135,70 @@ def test_config_show_no_file(tmp_path):
     assert result.exit_code != 0
     assert "User profile not found" in result.stdout
     assert "non_existent_profile.yaml" in result.stdout
+
+
+@patch("jobsherpa.agent.agent.JobSherpaAgent._find_matching_recipe")
+@patch("jobsherpa.agent.tool_executor.ToolExecutor.execute")
+def test_run_command_defaults_to_current_user(mock_execute, mock_find_recipe, tmp_path):
+    """
+    Tests that the `run` command, when called without --user-profile,
+    defaults to the current user's config and correctly sets up the workspace.
+    """
+    # 1. Setup: Create a workspace and a user profile file for a test user
+    workspace_path = tmp_path / "test_workspace"
+    workspace_path.mkdir()
+    
+    # The CLI will look for knowledge_base relative to the current directory
+    kb_path = tmp_path / "knowledge_base"
+    user_dir = kb_path / "user"
+    user_dir.mkdir(parents=True)
+    system_dir = kb_path / "system" # Needed for system config
+    system_dir.mkdir(parents=True)
+    
+    # The agent will look for a tools directory for the template
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir()
+    (tools_dir / "mock.j2").touch()
+
+
+    # Create a dummy system profile to avoid other errors
+    with open(system_dir / "vista.yaml", "w") as f:
+        yaml.dump({"name": "vista"}, f)
+
+    test_user = "testuser"
+    user_profile_file = user_dir / f"{test_user}.yaml"
+    user_profile = {
+        "defaults": {
+            "workspace": str(workspace_path),
+            "partition": "test-partition",
+            "allocation": "TEST-123",
+        }
+    }
+    with open(user_profile_file, 'w') as f:
+        yaml.dump(user_profile, f)
+
+    # Mock the agent's recipe finding and execution logic
+    mock_find_recipe.return_value = {
+        "name": "mock_recipe", "template": "mock.j2", "tool": "sbatch"
+    }
+    mock_execute.return_value = "Submitted batch job mock_789"
+
+    # 2. Act: Run the command, mocking getuser and the Jinja2 environment loader
+    with patch("getpass.getuser", return_value=test_user), \
+         patch("jinja2.FileSystemLoader", return_value=jinja2.FileSystemLoader(str(tools_dir))):
+        
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            result = runner.invoke(app, ["run", "Do something", "--system-profile", "vista"])
+        finally:
+            os.chdir(original_cwd)
+
+    # 3. Assert
+    assert result.exit_code == 0, f"CLI command failed with output: {result.stdout}"
+    assert "Job submitted successfully" in result.stdout
+    
+    # Verify the workspace was correctly used
+    mock_execute.assert_called_once()
+    call_kwargs = mock_execute.call_args.kwargs
+    assert call_kwargs.get("workspace") == str(workspace_path)

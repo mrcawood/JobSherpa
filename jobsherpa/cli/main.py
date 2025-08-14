@@ -107,7 +107,7 @@ def run(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Run in dry-run mode without executing real commands."
     ),
-    system_profile: str = typer.Option(
+    system_profile: Optional[str] = typer.Option(
         None, "--system-profile", help="The name of the system profile to use from the knowledge base."
     ),
     user_profile: Optional[str] = typer.Option(
@@ -132,11 +132,14 @@ def run(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    # If no user profile is specified, default to the current user
+    effective_user_profile = user_profile or getpass.getuser()
+
     logging.info("CLI is running...")
     agent = JobSherpaAgent(
         dry_run=dry_run,
         system_profile=system_profile,
-        user_profile=user_profile
+        user_profile=effective_user_profile
     )
     agent.start()
     response, job_id = agent.run(prompt)
