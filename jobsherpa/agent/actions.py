@@ -243,43 +243,59 @@ class QueryHistoryAction:
     def __init__(self, job_history: JobHistory):
         self.job_history = job_history
 
-    def run(self, prompt: str):
-        job_id = self._extract_job_id(prompt)
-
-        if not job_id:
-            return "I'm sorry, I couldn't determine which job you're asking about. Please specify a job ID."
-
-        if job_id == "last":
-            job_id = self.job_history.get_latest_job_id()
-            if not job_id:
-                return "I couldn't find any jobs in your history."
-
-        status = self.job_history.get_status(job_id)
-        if not status:
-            return f"Sorry, I couldn't find any information for job ID {job_id}."
-
-        result = self.job_history.get_result(job_id)
-        
-        if result:
-            return f"The result of job {job_id} ({status}) is: {result}"
-        elif status == "COMPLETED":
-            return f"Job {job_id} is {status}, but a result could not be parsed."
+    def run(self, prompt: str) -> str:
+        # Simple dispatcher based on flexible regex matching
+        prompt_lower = prompt.lower()
+        if re.search(r"(?=.*status)(?=.*last)", prompt_lower):
+            return self._get_last_job_status()
+        elif re.search(r"(?=.*result)(?=.*last)", prompt_lower):
+            return self._get_last_job_result()
+        # Add more rules here as we expand the toolbox
         else:
-            return f"Job {job_id} is still {status}. The result is not yet available."
-
-    def _extract_job_id(self, prompt: str) -> Optional[str]:
-        """Extracts a job ID or the keyword 'last' from the prompt."""
-        prompt = prompt.lower()
-        if "last" in prompt or "latest" in prompt or "recent" in prompt:
-            return "last"
-        
-        match = re.search(r"job\s+(\d+)", prompt)
-        if match:
-            return match.group(1)
-        
-        # Simple fallback for just a number
-        match = re.search(r"(\d{4,})", prompt)
-        if match:
-            return match.group(1)
+            # Fallback to the original "get result by ID" logic for now
+            job_id_match = re.search(r"(\d+)", prompt)
+            if job_id_match:
+                job_id = job_id_match.group(1)
+                job_info = self.job_history.get_job_by_id(job_id)
+                if job_info:
+                    # For a specific ID, let's provide a more comprehensive summary
+                    status = self.job_history.check_job_status(job_id)
+                    result = job_info.get('result', 'Not available')
+                    return f"Job {job_id} status is {status}. Result: {result}"
+            return "Sorry, I'm not sure how to answer that."
             
-        return None
+    def _get_last_job_status(self) -> str:
+        """
+        Retrieves the status of the most recent job.
+        
+        This tool finds the last job recorded in the history, actively checks its
+        current status with the scheduler, and returns a formatted string.
+        
+        Returns:
+            A string describing the job's status, or a message if no jobs are found.
+        """
+        latest_job = self.job_history.get_latest_job()
+        if not latest_job:
+            return "I can't find any jobs in your history."
+            
+        # The job history might be stale, so we actively check the latest status
+        job_id = latest_job['job_id']
+        current_status = self.job_history.check_job_status(job_id)
+        
+        return f"The status of job {job_id} is {current_status}."
+        
+    def _get_last_job_result(self) -> str:
+        """
+        Retrieves the result of the most recent job.
+        
+        This tool finds the last job recorded in the history and returns its
+        stored result. It does not actively check the job's status.
+        
+        Returns:
+            A string describing the job's result, or a message if no jobs are found.
+        """
+        latest_job = self.job_history.get_latest_job()
+        if not latest_job:
+            return "I can't find any jobs in your history."
+            
+        return f"The result of job {latest_job['job_id']} is: {latest_job.get('result', 'Not available')}."

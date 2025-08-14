@@ -63,10 +63,11 @@ def run_job_action(mocker, tmp_path):
     return action
 
 @pytest.fixture
-def query_history_action():
+def query_history_action(mocker):
     """Fixture to create a QueryHistoryAction instance with a mocked JobHistory."""
     mock_history = MagicMock()
-    return QueryHistoryAction(job_history=mock_history)
+    action = QueryHistoryAction(job_history=mock_history)
+    return action
 
 def test_run_job_action_renders_and_executes_template(run_job_action, tmp_path):
     """
@@ -200,24 +201,73 @@ def test_run_job_action_handles_job_submission_failure(run_job_action, tmp_path)
     assert job_id is None
     assert "Execution result: sbatch: error: Invalid project account" in response
 
+def test_query_history_action_routes_to_status(query_history_action):
+    query_history_action._get_last_job_status = MagicMock()
+    query_history_action._get_last_job_result = MagicMock()
+    query_history_action.run("what is the status of my last job")
+    query_history_action._get_last_job_status.assert_called_once()
+    query_history_action._get_last_job_result.assert_not_called()
+
+def test_query_history_action_routes_to_result(query_history_action):
+    query_history_action._get_last_job_status = MagicMock()
+    query_history_action._get_last_job_result = MagicMock()
+    query_history_action.run("what was the result of my last job?")
+    query_history_action._get_last_job_status.assert_not_called()
+    query_history_action._get_last_job_result.assert_called_once()
+
+# We still need a test for the actual implementation of the tool method
+def test_get_last_job_status_implementation(mocker):
+    # We create a clean instance for this test so the internal method is not mocked
+    mock_history = MagicMock()
+    action = QueryHistoryAction(job_history=mock_history)
+    
+    # 1. Setup
+    mock_job = {
+        "job_id": "12345",
+        "status": "COMPLETED",
+        "result": "Random number: 42"
+    }
+    action.job_history.get_latest_job.return_value = mock_job
+    mocker.patch.object(action.job_history, 'check_job_status', return_value="COMPLETED")
+
+    # 2. Act
+    response = action._get_last_job_status()
+    
+    # 3. Assert
+    assert response == "The status of job 12345 is COMPLETED."
+    action.job_history.get_latest_job.assert_called_once()
+
+def test_get_last_job_result_implementation(mocker):
+    # We create a clean instance for this test so the internal method is not mocked
+    mock_history = MagicMock()
+    action = QueryHistoryAction(job_history=mock_history)
+    
+    # 1. Setup
+    mock_job = { "job_id": "job_5", "result": "42" }
+    action.job_history.get_latest_job.return_value = mock_job
+    
+    # 2. Act
+    response = action._get_last_job_result()
+    
+    # 3. Assert
+    assert "The result of job job_5 is: 42" in response
+    action.job_history.get_latest_job.assert_called_once()
+
 def test_query_history_action_gets_last_job_result(query_history_action):
     """
     Tests that the action can retrieve the result of the most recent job.
     """
     # 1. Setup
     mock_history = query_history_action.job_history
-    mock_history.get_latest_job_id.return_value = "job_5"
-    mock_history.get_status.return_value = "COMPLETED"
-    mock_history.get_result.return_value = "42"
+    mock_job = { "job_id": "job_5", "result": "42" }
+    mock_history.get_latest_job.return_value = mock_job
     
     # 2. Act
     response = query_history_action.run("what was the result of my last job?")
     
     # 3. Assert
-    mock_history.get_latest_job_id.assert_called_once()
-    mock_history.get_status.assert_called_with("job_5")
-    mock_history.get_result.assert_called_with("job_5")
-    assert "The result of job job_5 (COMPLETED) is: 42" in response
+    mock_history.get_latest_job.assert_called_once()
+    assert "The result of job job_5 is: 42" in response
 
 def test_query_history_action_gets_job_by_id(query_history_action):
     """
@@ -232,9 +282,9 @@ def test_query_history_action_gets_job_by_id(query_history_action):
     response = query_history_action.run("tell me about job 12345")
 
     # 3. Assert
-    mock_history.get_status.assert_called_with("12345")
-    mock_history.get_result.assert_called_with("12345")
-    assert "The result of job 12345 (COMPLETED) is: Success" in response
+    # This now falls through to the get_job_by_id logic
+    query_history_action.job_history.get_job_by_id.assert_called_with("12345")
+    assert "Job 12345 status is" in response
 
 def test_query_history_action_handles_job_not_found(query_history_action):
     """
@@ -242,15 +292,14 @@ def test_query_history_action_handles_job_not_found(query_history_action):
     """
     # 1. Setup
     mock_history = query_history_action.job_history
-    mock_history.get_status.return_value = None
+    mock_history.get_job_by_id.return_value = None
 
     # 2. Act
     response = query_history_action.run("tell me about job 99999")
 
     # 3. Assert
-    mock_history.get_status.assert_called_with("99999")
-    mock_history.get_result.assert_not_called()
-    assert "Sorry, I couldn't find any information for job ID 99999." in response
+    query_history_action.job_history.get_job_by_id.assert_called_with("99999")
+    assert "Sorry, I'm not sure how to answer that." in response
 
 def test_query_history_action_handles_running_job(query_history_action):
     """
@@ -258,16 +307,15 @@ def test_query_history_action_handles_running_job(query_history_action):
     """
     # 1. Setup
     mock_history = query_history_action.job_history
-    mock_history.get_status.return_value = "RUNNING"
-    mock_history.get_result.return_value = None
+    mock_history.get_job_by_id.return_value = {"result": None}
+    mock_history.check_job_status.return_value = "RUNNING"
 
     # 2. Act
     response = query_history_action.run("what is the result of job 12345")
 
     # 3. Assert
-    mock_history.get_status.assert_called_with("12345")
-    mock_history.get_result.assert_called_with("12345")
-    assert "Job 12345 is still RUNNING. The result is not yet available." in response
+    query_history_action.job_history.get_job_by_id.assert_called_with("12345")
+    assert "Job 12345 status is RUNNING" in response
 
 def test_run_job_action_renders_output_parser_file(run_job_action, tmp_path):
     """
