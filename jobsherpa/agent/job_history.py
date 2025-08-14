@@ -189,11 +189,15 @@ class JobHistory:
         # We only care about the primary job entry, not sub-steps like '.batch'
         for line in sacct_result.stdout.strip().splitlines():
             parts = line.split()
-            if len(parts) > 1 and parts[0] in job_ids:
-                job_id, state = parts[0].strip(), parts[1].strip()
+            # The job ID is the first part. Check if it starts with any of our target IDs.
+            if len(parts) > 1 and any(parts[0].startswith(target_id) for target_id in job_ids):
+                job_id = next(target_id for target_id in job_ids if parts[0].startswith(target_id))
+                state = parts[1].strip()
                 normalized_state = self._normalize_sacct_state(state)
-                sacct_statuses[job_id] = normalized_state
-                logger.debug("Parsed sacct status for job %s: %s -> %s", job_id, state, normalized_state)
+                # Only update if we haven't already found a final state for this job ID
+                if job_id not in sacct_statuses:
+                    sacct_statuses[job_id] = normalized_state
+                    logger.debug("Parsed sacct status for job %s: %s -> %s", job_id, state, normalized_state)
         return sacct_statuses
 
     def _normalize_sacct_state(self, sacct_state: str) -> str:

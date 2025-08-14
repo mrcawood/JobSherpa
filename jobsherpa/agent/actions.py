@@ -84,7 +84,8 @@ class RunJobAction:
                 return error_msg, None
 
             # Create a unique, isolated directory for this job run
-            job_workspace = self.workspace_manager.create_job_workspace()
+            job_name = context.get("job_name", "jobsherpa-run")
+            job_workspace = self.workspace_manager.create_job_workspace(job_name=job_name)
             logger.info("Created isolated job directory: %s", job_workspace.job_dir)
 
             # Add job-specific paths to the rendering context

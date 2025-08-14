@@ -58,7 +58,7 @@ def test_get_status_actively_checks_squeue(job_history):
     job_history.register_job(job_id, "/tmp/mock_dir")
 
     # Mock squeue showing the job is now running
-    mock_squeue_output = MagicMock(stdout=f"{job_id} RUNNING")
+    mock_squeue_output = MagicMock(stdout=f"{job_id},RUNNING", stderr="")
     
     with patch("subprocess.run", return_value=mock_squeue_output) as mock_subprocess:
         status = job_history.get_status(job_id)
@@ -78,8 +78,8 @@ def test_get_status_actively_checks_sacct(job_history):
     job_history.set_status(job_id, "RUNNING")
 
     # Mock squeue returning empty, then sacct returning COMPLETED
-    mock_squeue_empty = MagicMock(stdout="")
-    mock_sacct_completed = MagicMock(stdout=f"{job_id}|COMPLETED|0:0")
+    mock_squeue_empty = MagicMock(stdout="", stderr="slurm_load_jobs error: Invalid job id specified")
+    mock_sacct_completed = MagicMock(stdout=f"{job_id}      COMPLETED      0:0", stderr="")
     
     with patch("subprocess.run", side_effect=[mock_squeue_empty, mock_sacct_completed]) as mock_subprocess:
         status = job_history.get_status(job_id)
