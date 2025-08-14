@@ -138,19 +138,23 @@ class JobHistory:
 
     def _parse_squeue_status(self, job_ids: list[str]) -> dict:
         """Parses the status from squeue output."""
-        squeue_output = subprocess.run(
-            ["squeue", "--jobs=" + ",".join(job_ids), "--noheader", "--format=JobId,State"],
-            capture_output=True,
-            text=True,
-        )
-        logger.debug("squeue output:\n%s", squeue_output.stdout)
+        command = ["squeue", "--jobs=" + ",".join(job_ids), "--noheader", "--format=%i,%T"]
+        logger.debug("Running squeue command: %s", " ".join(command))
+        squeue_result = subprocess.run(command, capture_output=True, text=True)
+        
+        if squeue_result.stderr:
+            logger.warning("squeue command returned an error:\n%s", squeue_result.stderr)
+
+        logger.debug("squeue stdout:\n%s", squeue_result.stdout)
+        
         squeue_statuses = {}
-        for line in squeue_output.stdout.splitlines():
-            parts = line.split()
-            if len(parts) > 1:
-                job_id = parts[0]
-                state = parts[1]
-                squeue_statuses[job_id] = self._normalize_squeue_state(state)
+        for line in squeue_result.stdout.strip().splitlines():
+            parts = line.split(',')
+            if len(parts) == 2:
+                job_id, state = parts[0].strip(), parts[1].strip()
+                normalized_state = self._normalize_squeue_state(state)
+                squeue_statuses[job_id] = normalized_state
+                logger.debug("Parsed squeue status for job %s: %s -> %s", job_id, state, normalized_state)
         return squeue_statuses
 
     def _normalize_squeue_state(self, squeue_state: str) -> str:
@@ -172,19 +176,24 @@ class JobHistory:
 
     def _parse_sacct_status(self, job_ids: list[str]) -> dict:
         """Parses the final status from sacct output."""
-        sacct_output = subprocess.run(
-            ["sacct", "--jobs=" + ",".join(job_ids), "--noheader", "--format=JobId,State,ExitCode"],
-            capture_output=True,
-            text=True,
-        )
-        logger.debug("sacct output:\n%s", sacct_output.stdout)
+        command = ["sacct", "--jobs=" + ",".join(job_ids), "--noheader", "--format=JobId,State,ExitCode"]
+        logger.debug("Running sacct command: %s", " ".join(command))
+        sacct_result = subprocess.run(command, capture_output=True, text=True)
+
+        if sacct_result.stderr:
+            logger.warning("sacct command returned an error:\n%s", sacct_result.stderr)
+            
+        logger.debug("sacct stdout:\n%s", sacct_result.stdout)
+
         sacct_statuses = {}
-        for line in sacct_output.stdout.splitlines():
-            parts = line.split('|')
-            if len(parts) > 1:
-                job_id = parts[0].strip()
-                state = parts[1].strip()
-                sacct_statuses[job_id] = self._normalize_sacct_state(state)
+        # We only care about the primary job entry, not sub-steps like '.batch'
+        for line in sacct_result.stdout.strip().splitlines():
+            parts = line.split()
+            if len(parts) > 1 and parts[0] in job_ids:
+                job_id, state = parts[0].strip(), parts[1].strip()
+                normalized_state = self._normalize_sacct_state(state)
+                sacct_statuses[job_id] = normalized_state
+                logger.debug("Parsed sacct status for job %s: %s -> %s", job_id, state, normalized_state)
         return sacct_statuses
 
     def _normalize_sacct_state(self, sacct_state: str) -> str:
