@@ -36,6 +36,7 @@ class JobSherpaAgent:
     ):
         """Initializes the agent and all its components."""
         # --- 1. Load Core Configs ---
+        profile_path = None # Ensure profile_path is always defined
         if user_config_override:
             user_config = user_config_override
         else:
@@ -84,11 +85,12 @@ class JobSherpaAgent:
         )
         query_history_action = QueryHistoryAction(job_history=job_history)
 
-        # --- 4. Initialize the Conversation Manager ---
+        # --- 4. Initialize Conversation Manager ---
         self.conversation_manager = ConversationManager(
             intent_classifier=intent_classifier,
             run_job_action=run_job_action,
             query_history_action=query_history_action,
+            user_profile_path=profile_path,
         )
 
         logger.info("JobSherpaAgent initialized.")

@@ -106,3 +106,61 @@ def test_conversation_manager_handles_multi_turn_conversation():
     )
     assert "Job submitted with ID: 12345" in response
     assert not manager.is_waiting_for_input()
+
+def test_conversation_manager_offers_to_save_multiple_parameters(mocker):
+    """
+    Tests the full multi-turn flow where the agent:
+    1. Asks for multiple missing parameters.
+    2. Submits the job with the provided parameters.
+    3. Asks the user if they want to save all the new parameters.
+    4. Saves the configuration upon user confirmation.
+    """
+    # 1. Setup
+    mock_intent_classifier = MagicMock()
+    mock_run_job_action = MagicMock()
+    mock_query_history_action = MagicMock()
+    mock_config_manager_class = mocker.patch("jobsherpa.agent.conversation_manager.ConfigManager")
+    mock_config_manager_instance = mock_config_manager_class.return_value
+    
+    mock_user_config = MagicMock()
+    mock_config_manager_instance.load.return_value = mock_user_config
+
+    manager = ConversationManager(
+        intent_classifier=mock_intent_classifier,
+        run_job_action=mock_run_job_action,
+        query_history_action=mock_query_history_action,
+        user_profile_path="/fake/path/user.yaml",
+    )
+    
+    # --- Turn 1: Ask for 'allocation' ---
+    mock_run_job_action.run.return_value = (
+        "I need an allocation.", None, True, "allocation"
+    )
+    response, _, is_waiting = manager.handle_prompt("Run my job")
+    assert "I need an allocation" in response
+    assert is_waiting is True
+
+    # --- Turn 2: User provides 'allocation', agent asks for 'partition' ---
+    mock_run_job_action.run.return_value = (
+        "I need a partition.", None, True, "partition"
+    )
+    response, _, is_waiting = manager.handle_prompt("use-this-alloc")
+    assert "I need a partition" in response
+    assert is_waiting is True
+
+    # --- Turn 3: User provides 'partition', job succeeds, agent offers to save ---
+    mock_run_job_action.run.return_value = (
+        "Job submitted with ID: 12345", "12345", False, None
+    )
+    response, _, is_waiting = manager.handle_prompt("use-this-partition")
+    assert "Job submitted" in response
+    assert "Would you like to save {'allocation': 'use-this-alloc', 'partition': 'use-this-partition'}" in response
+    assert is_waiting is True
+
+    # --- Turn 4: User confirms the save ---
+    response, _, is_waiting = manager.handle_prompt("yes")
+    # ... (assertions for saving)
+    assert mock_user_config.defaults.allocation == "use-this-alloc"
+    assert mock_user_config.defaults.partition == "use-this-partition"
+    assert "Configuration saved!" in response
+    assert is_waiting is False
