@@ -257,14 +257,18 @@ class QueryHistoryAction:
     def run(self, prompt: str) -> str:
         # Simple dispatcher based on flexible regex matching
         prompt_lower = prompt.lower()
+        logger.debug("QueryHistoryAction received prompt: %s", prompt)
         if re.search(r"(?=.*status)(?=.*last)", prompt_lower):
+            logger.debug("Matched last status query")
             return self._get_last_job_status()
         elif re.search(r"(?=.*result)(?=.*last)", prompt_lower):
+            logger.debug("Matched last result query")
             return self._get_last_job_result()
         
         job_id_match = re.search(r"job\s+(\d+)", prompt_lower)
         if job_id_match:
             job_id = job_id_match.group(1)
+            logger.debug("Matched job by id query for job_id=%s", job_id)
             return self._get_job_by_id_summary(job_id)
 
         return "Sorry, I'm not sure how to answer that."
@@ -280,11 +284,13 @@ class QueryHistoryAction:
             A string describing the job's status, or a message if no jobs are found.
         """
         latest_job = self.job_history.get_latest_job()
+        logger.debug("Latest job for status lookup: %s", latest_job.get('job_id') if latest_job else None)
         if not latest_job:
             return "I can't find any jobs in your history."
             
         job_id = latest_job['job_id']
         current_status = self.job_history.get_status(job_id)
+        logger.info("Latest job %s current status: %s", job_id, current_status)
         
         return f"The status of job {job_id} is {current_status}."
         
@@ -299,10 +305,12 @@ class QueryHistoryAction:
             A string describing the job's result, or a message if no jobs are found.
         """
         latest_job_id = self.job_history.get_latest_job_id()
+        logger.debug("Latest job id for result lookup: %s", latest_job_id)
         if not latest_job_id:
             return "I can't find any jobs in your history."
             
         result = self.job_history.get_result(latest_job_id)
+        logger.info("Latest job %s stored result: %s", latest_job_id, result)
         return f"The result of job {latest_job_id} is: {result or 'Not available'}."
 
     def _get_job_by_id_summary(self, job_id: str) -> str:
@@ -320,9 +328,11 @@ class QueryHistoryAction:
             A string containing the job summary, or a message if the job is not found.
         """
         job_info = self.job_history.get_job_by_id(job_id)
+        logger.debug("Lookup job by id %s -> found: %s", job_id, bool(job_info))
         if not job_info:
             return f"Sorry, I couldn't find any information for job ID {job_id}."
             
         status = self.job_history.check_job_status(job_id)
         result = job_info.get('result', 'Not available')
+        logger.info("Job %s summary: status=%s, result=%s", job_id, status, result)
         return f"Job {job_id} status is {status}. Result: {result}"

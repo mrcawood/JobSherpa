@@ -101,25 +101,18 @@ def config_show(
 
 def setup_logging(level: int):
     """
-    Forcefully configures the root logger to the desired level and format.
-    
-    This function removes all existing handlers from the root logger and adds a
-    new, configured StreamHandler. This ensures that our logging settings
-    take precedence over any library-level configurations.
+    Configure application logging at process start.
+    Uses basicConfig with force=True to reset pre-existing handlers safely.
+    Also reduces noise from very chatty third-party libraries when not debugging.
     """
-    root_logger = logging.getLogger()
-    # Remove any existing handlers
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-        
-    # Set the desired level on the root logger itself
-    root_logger.setLevel(level)
-    
-    # Add our new, configured handler
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    root_logger.addHandler(handler)
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        force=True,
+    )
+    if level > logging.DEBUG:
+        logging.getLogger("haystack").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 @app.command()
 def run(
