@@ -183,7 +183,10 @@ class JobSherpaAgent:
             
             # Ensure workspace is defined for templated jobs
             if not self.workspace:
-                error_msg = "Workspace must be defined in user profile for templated jobs."
+                error_msg = (
+                    "Workspace must be defined in user profile for templated jobs.\n"
+                    "You can set it by running: jobsherpa config set workspace /path/to/your/workspace"
+                )
                 logger.error(error_msg)
                 return error_msg, None
 

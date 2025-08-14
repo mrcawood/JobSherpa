@@ -379,3 +379,35 @@ def test_agent_operates_within_scoped_workspace(tmp_path):
             
             # Assert that the command was executed from within the workspace
             assert mock_subprocess.call_args.kwargs["cwd"] == str(workspace_path)
+
+def test_agent_provides_helpful_error_for_missing_workspace(tmp_path):
+    """
+    Tests that the agent returns an actionable error message when a templated
+    job is run without a workspace defined in the user profile.
+    """
+    # 1. Setup: Create a user profile *without* a workspace key
+    user_profile = {
+        "defaults": {
+            "partition": "development",
+            "allocation": "TACC-12345"
+        }
+    }
+    
+    # 2. Initialize agent with this incomplete profile
+    agent = JobSherpaAgent(
+        system_profile="vista",
+        user_config=user_profile 
+    )
+
+    # 3. Mock the RAG pipeline to return a templated recipe
+    with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
+        mock_document = MagicMock()
+        mock_document.meta = {"name": "any_templated_job", "template": "any.j2"}
+        mock_pipeline_run.return_value = {"documents": [mock_document]}
+
+        # 4. Run and assert the error message
+        response, job_id = agent.run("Run a templated job")
+
+        assert job_id is None
+        assert "Workspace must be defined" in response
+        assert "jobsherpa config set workspace /path/to/your/workspace" in response
