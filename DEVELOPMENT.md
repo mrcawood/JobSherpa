@@ -8,23 +8,25 @@ The agent now has a robust system for managing user-specific settings and operat
 
 ---
 
-## Current Goal: Implement Asynchronous Job Handling
+## Current Goal: Implement Agentic Architecture for Conversation and Memory
 
-The agent's current `run` command is synchronous; it blocks the user's terminal from the moment a prompt is entered until the job is submitted. For a real HPC job that might queue for hours, this is not a viable user experience. This goal is to refactor the agent's core logic to handle job submission and monitoring in the background, immediately returning control to the user.
+To evolve from a command-executor into a true conversational agent, we must refactor the core architecture. The current monolithic `agent.run` method is insufficient for handling different types of user queries (e.g., running jobs vs. asking about past jobs). This goal is to implement a modular, intent-driven architecture that provides a robust foundation for all future conversational features.
 
-**The Vision:** The user should be able to submit a job and immediately get their prompt back, along with a job ID. They can then use other commands (e.g., `jobsherpa status <job_id>`, `jobsherpa results <job_id>`) to check on the job's progress or retrieve its results later. This transforms the agent from a simple one-shot tool into an interactive job manager.
+**The Vision:** The agent's core will be a `ConversationManager` that inspects the user's prompt to determine their intent. Based on that intent, it will delegate the task to a specific `ActionHandler` (e.g., `RunJobAction`, `QueryHistoryAction`). This is a foundational shift from a "doer" to a "knower and doer," enabling the agent to understand, remember, and act with much greater flexibility. A key part of this is introducing a persistent `JobHistory` to give the agent a long-term memory.
 
 **Definition of Done:**
 
-1.  **Immediate User Feedback:**
-    -   The `jobsherpa run` command returns a job ID and exits immediately after successful submission.
-    -   The `JobStateTracker` continues to run in a separate, persistent background process or thread.
-2.  **New CLI Commands:**
-    -   A new `jobsherpa status <job_id>` command is implemented to query the `JobStateTracker` for the current status of a specific job.
-    -   A new `jobsherpa results <job_id>` command is implemented to retrieve the final, parsed output of a completed job.
-3.  **Robust Background Process:**
-    -   The background monitoring process is robust and can be started/stopped reliably.
-    -   The mechanism for communication between the CLI and the background process (e.g., via file-based state, sockets) is clearly defined and tested.
+1.  **New Core Components:**
+    -   A `ConversationManager` is created and becomes the new entry point for the agent's logic.
+    -   A simple, keyword-based `IntentClassifier` is implemented to distinguish between "run job" and "query history" intents.
+    -   The `JobStateTracker` is refactored into a persistent `JobHistory` component that saves its state to a file (e.g., `~/.jobsherpa/history.json`).
+2.  **Refactored Logic into Action Handlers:**
+    -   All logic for running a job (RAG, workspace creation, execution) is moved from `agent.py` into a new `RunJobAction` handler.
+    -   New logic for querying the `JobHistory` is implemented in a `QueryHistoryAction` handler.
+3.  **Support for "What was the result of my last job?":**
+    -   The `QueryHistoryAction` can successfully find the most recent job in the `JobHistory`.
+    -   The agent can formulate a correct, human-readable response based on the parsed results of the last job.
+    -   The `output_parser` format in recipes is enhanced to support parsing multiple named values (e.g., "completion_time", "timesteps").
 
 ---
 
@@ -44,15 +46,12 @@ The agent's current `run` command is synchronous; it blocks the user's terminal 
 
 This section serves as a transparent record of design decisions made for short-term velocity. These items must be addressed before the project is considered mature.
 
-1.  **Synchronous Agent Flow:**
-    -   **Current State:** The agent's `run` method blocks until execution is complete.
-    -   **Long-Term Plan:** This will be addressed by the "Implement Asynchronous Job Handling" goal.
-2.  **No Real LLM Integration:**
-    -   **Current State:** The "planning" logic is a simple mapping from a retrieved recipe to a tool.
-    -   **Long-Term Plan:** Integrate a real Large Language Model (LLM) to enable more complex reasoning, planning, and conversational capabilities.
-3.  **Simplistic Error Handling:**
+1.  **No Real LLM Integration:**
+    -   **Current State:** The "planning" logic is a simple mapping from a retrieved recipe to a tool. The new `IntentClassifier` will be keyword-based.
+    -   **Long-Term Plan:** Integrate a real Large Language Model (LLM) to replace the simple `IntentClassifier` and enable more complex reasoning, planning, and conversational capabilities.
+2.  **Simplistic Error Handling:**
     -   **Current State:** The agent has basic error handling but lacks sophisticated retry mechanisms or the ability to intelligently interpret and recover from failures.
     -   **Long-Term Plan:** Implement a robust error handling system with custom exception classes and recovery strategies.
-4.  **Hardcoded Knowledge Base Path:**
+3.  **Hardcoded Knowledge Base Path:**
     -   **Current State:** The path to the `knowledge_base` directory is hardcoded.
     -   **Long-Term Plan:** Make this path configurable via a central application configuration file to improve portability.
