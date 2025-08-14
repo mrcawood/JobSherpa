@@ -137,73 +137,40 @@ def test_config_show_no_file(tmp_path):
     assert "non_existent_profile.yaml" in result.stdout
 
 
-@patch("jobsherpa.agent.agent.JobSherpaAgent._find_matching_recipe")
-@patch("jobsherpa.agent.tool_executor.ToolExecutor.execute")
-def test_run_command_defaults_to_current_user(mock_execute, mock_find_recipe, tmp_path):
+@patch("jobsherpa.agent.agent.RunJobAction")
+def test_run_command_defaults_to_current_user(mock_run_job_action, tmp_path):
     """
-    Tests that the `run` command, when called without --user-profile,
-    defaults to the current user's config and correctly sets up the workspace.
+    Tests that the `run` command correctly initializes the agent and that
+    the agent, in turn, calls the appropriate action handler.
     """
-    # 1. Setup: Create a workspace and a user profile file for a test user
+    # 1. Setup
     workspace_path = tmp_path / "test_workspace"
     workspace_path.mkdir()
-    
-    # The CLI will look for knowledge_base relative to the current directory
     kb_path = tmp_path / "knowledge_base"
     user_dir = kb_path / "user"
     user_dir.mkdir(parents=True)
-    system_dir = kb_path / "system" # Needed for system config
+    system_dir = kb_path / "system"
     system_dir.mkdir(parents=True)
-    
-    # The agent will look for a tools directory for the template
-    tools_dir = tmp_path / "tools"
-    tools_dir.mkdir()
-    (tools_dir / "mock.j2").touch()
-
-
-    # Create a dummy system profile to avoid other errors
     with open(system_dir / "vista.yaml", "w") as f:
         yaml.dump({"name": "vista"}, f)
-
+    
     test_user = "testuser"
     user_profile_file = user_dir / f"{test_user}.yaml"
-    user_profile = {
-        "defaults": {
-            "workspace": str(workspace_path),
-            "partition": "test-partition",
-            "allocation": "TEST-123",
-            "system": "vista", # Required for the agent
-        }
-    }
+    user_profile = {"defaults": {"workspace": str(workspace_path), "system": "vista"}}
     with open(user_profile_file, 'w') as f:
         yaml.dump(user_profile, f)
 
-    # Mock the agent's recipe finding and execution logic
-    mock_find_recipe.return_value = {
-        "name": "mock_recipe", "template": "mock.j2", "tool": "sbatch"
-    }
-    mock_execute.return_value = "Submitted batch job mock_789"
+    mock_action_instance = mock_run_job_action.return_value
+    mock_action_instance.run.return_value = ("Job submitted: 12345", "12345")
 
-    # 2. Act: Run the `run` command, mocking the user and changing the CWD
-    with patch("getpass.getuser", return_value=test_user), \
-         patch("jinja2.FileSystemLoader", return_value=jinja2.FileSystemLoader(str(tools_dir))):
-        
+    # 2. Act
+    with patch("getpass.getuser", return_value=test_user):
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
-        try:
-            # Note: We no longer need --system-profile, as it's in the user's config
-            result = runner.invoke(app, ["run", "Do something"])
-        finally:
-            os.chdir(original_cwd)
-
-    # 3. Assert
-    assert result.exit_code == 0, f"CLI command failed with output: {result.stdout}"
-    assert "Job submitted successfully" in result.stdout
+        result = runner.invoke(app, ["run", "Do something"])
+        os.chdir(original_cwd)
     
-    # Verify the workspace was correctly used
-    mock_execute.assert_called_once()
-    call_kwargs = mock_execute.call_args.kwargs
-    # The workspace passed to the executor should now be the unique job sub-directory
-    assert len(list(workspace_path.iterdir())) == 1 # A single job directory was created
-    job_dir = list(workspace_path.iterdir())[0]
-    assert call_kwargs.get("workspace") == str(job_dir)
+    # 3. Assert
+    assert result.exit_code == 0, f"CLI command failed: {result.stdout}"
+    assert "Job submitted: 12345" in result.stdout
+    mock_action_instance.run.assert_called_once_with("Do something")

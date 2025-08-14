@@ -35,7 +35,7 @@ class JobSherpaAgent:
         Initializes the agent and all its components.
         """
         # --- 1. Load Core Configs ---
-        self.user_config = user_config or self._load_user_config(user_profile)
+        self.user_config = user_config or self._load_user_config(user_profile, knowledge_base_dir)
         
         if not self.user_config or "defaults" not in self.user_config:
             raise ValueError("User profile is missing 'defaults' section.")
@@ -51,7 +51,20 @@ class JobSherpaAgent:
         os.makedirs(history_dir, exist_ok=True)
         history_file = os.path.join(history_dir, "history.json")
         
+        effective_system_profile = system_profile
+        if not effective_system_profile:
+            if self.user_config:
+                effective_system_profile = self.user_config.get("defaults", {}).get("system")
+            if not effective_system_profile:
+                raise ValueError(
+                    "User profile must contain a 'system' key in the 'defaults' section. "
+                    "You can set it by running: jobsherpa config set system <system_name>"
+                )
+        
+        system_config = self._load_system_config(effective_system_profile, knowledge_base_dir)
+
         # --- 2. Initialize Components ---
+        tool_executor = ToolExecutor(dry_run=dry_run)
         job_history = JobHistory(history_file_path=history_file)
         workspace_manager = WorkspaceManager(base_path=self.workspace)
         intent_classifier = IntentClassifier()
@@ -59,7 +72,11 @@ class JobSherpaAgent:
         # --- 3. Initialize Action Handlers (passing dependencies) ---
         run_job_action = RunJobAction(
             job_history=job_history,
-            workspace_manager=workspace_manager
+            workspace_manager=workspace_manager,
+            tool_executor=tool_executor,
+            knowledge_base_dir=knowledge_base_dir,
+            user_config=self.user_config,
+            system_config=system_config,
         )
         query_history_action = QueryHistoryAction(job_history=job_history)
 
@@ -104,25 +121,25 @@ class JobSherpaAgent:
                     recipes[recipe['name']] = recipe
         return recipes
 
-    def _load_system_config(self, profile_name: Optional[str]):
+    def _load_system_config(self, profile_name: Optional[str], knowledge_base_dir: str):
         """Loads a specific system configuration from the knowledge base."""
         if not profile_name:
             return None
         
-        system_file = os.path.join(self.knowledge_base_dir, "system", f"{profile_name}.yaml")
+        system_file = os.path.join(knowledge_base_dir, "system", f"{profile_name}.yaml")
         logger.debug("Loading system profile from: %s", system_file)
         if os.path.exists(system_file):
             with open(system_file, 'r') as f:
                 return yaml.safe_load(f)
         return None
 
-    def _load_user_config(self, profile_name: Optional[str]):
+    def _load_user_config(self, profile_name: Optional[str], knowledge_base_dir: str):
         """Loads a specific user configuration from the knowledge base."""
         # This will be refactored later
         if not profile_name:
             return None
         
-        user_file = os.path.join("knowledge_base", "user", f"{profile_name}.yaml")
+        user_file = os.path.join(knowledge_base_dir, "user", f"{profile_name}.yaml")
         if os.path.exists(user_file):
             with open(user_file, 'r') as f:
                 return yaml.safe_load(f)

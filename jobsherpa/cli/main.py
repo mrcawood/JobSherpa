@@ -138,17 +138,15 @@ def run(
     logging.info("CLI is running...")
     agent = JobSherpaAgent(
         dry_run=dry_run,
+        knowledge_base_dir="knowledge_base",
         system_profile=system_profile,
         user_profile=effective_user_profile
     )
-    agent.start()
-    response, job_id = agent.run(prompt)
-    
-    # Use logger for agent output, but print final response to stdout
-    logging.info("CLI received response: %s", response)
-    print(f"--> {response}")
-    
-    agent.stop()
+    response = agent.run(prompt)
+    if isinstance(response, tuple):
+        print(response[0])
+    else:
+        print(response)
 
 def run_app():
     app()
