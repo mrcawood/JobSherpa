@@ -272,9 +272,8 @@ class QueryHistoryAction:
         if not latest_job:
             return "I can't find any jobs in your history."
             
-        # The job history might be stale, so we actively check the latest status
         job_id = latest_job['job_id']
-        current_status = self.job_history.check_job_status(job_id)
+        current_status = self.job_history.get_status(job_id)
         
         return f"The status of job {job_id} is {current_status}."
         

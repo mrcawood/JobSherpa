@@ -228,7 +228,7 @@ def test_get_last_job_status_implementation(mocker):
         "result": "Random number: 42"
     }
     action.job_history.get_latest_job.return_value = mock_job
-    mocker.patch.object(action.job_history, 'check_job_status', return_value="COMPLETED")
+    action.job_history.get_status.return_value = "COMPLETED"
 
     # 2. Act
     response = action._get_last_job_status()

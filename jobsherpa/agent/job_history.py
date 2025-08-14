@@ -87,6 +87,10 @@ class JobHistory:
         """Gets the parsed result of a completed job."""
         return self._jobs[job_id].get("result") if job_id in self._jobs else None
 
+    def get_job_by_id(self, job_id: str) -> Optional[dict]:
+        """Returns all information for a specific job ID."""
+        return self._jobs.get(job_id)
+
     def get_latest_job_id(self) -> Optional[str]:
         """Returns the ID of the most recently submitted job."""
         if not self._jobs:
@@ -95,6 +99,19 @@ class JobHistory:
         # Find the job with the maximum start_time
         latest_job_id = max(self._jobs, key=lambda j: self._jobs[j].get("start_time", 0))
         return latest_job_id
+
+    def get_latest_job(self) -> Optional[dict]:
+        """
+        Retrieves the entire job dictionary for the most recently submitted job.
+        
+        Returns:
+            A dictionary containing the latest job's information, or None if no
+            jobs exist.
+        """
+        latest_job_id = self.get_latest_job_id()
+        if latest_job_id:
+            return self.get_job_by_id(latest_job_id)
+        return None
 
     def get_all_jobs(self) -> dict:
         """Returns the entire dictionary of jobs."""
