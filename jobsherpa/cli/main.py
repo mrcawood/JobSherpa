@@ -124,20 +124,32 @@ def run(
     # Defer the import of the agent to this command
     from jobsherpa.agent.agent import JobSherpaAgent
 
-    # Configure logging
+    # Set up logging properly to override any library settings
     log_level = logging.WARNING
+    if verbose:
+        log_level = logging.INFO
     if debug:
         log_level = logging.DEBUG
-    elif verbose:
-        log_level = logging.INFO
     
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    # Get the root logger and remove any existing handlers
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        root_logger.removeHandler(handler)
+        
+    # Add our own handler with the desired level and format
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    root_logger.addHandler(handler)
+    root_logger.setLevel(log_level)
 
-    # If no user profile is specified, default to the current user
-    effective_user_profile = user_profile or getpass.getuser()
+
+    if verbose:
+        logging.basicConfig(level=logging.INFO)
+    if debug:
+        logging.basicConfig(level=logging.DEBUG)
+
+    effective_user_profile = user_profile if user_profile else getpass.getuser()
 
     logging.info("CLI is running...")
     
