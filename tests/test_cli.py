@@ -137,8 +137,8 @@ def test_config_show_no_file(tmp_path):
     assert "non_existent_profile.yaml" in result.stdout
 
 
-@patch("jobsherpa.agent.agent.RunJobAction")
-def test_run_command_defaults_to_current_user(mock_run_job_action, tmp_path):
+@patch("jobsherpa.agent.agent.JobSherpaAgent")
+def test_run_command_defaults_to_current_user(mock_agent_class, tmp_path):
     """
     Tests that the `run` command correctly initializes the agent and that
     the agent, in turn, calls the appropriate action handler.
@@ -160,8 +160,8 @@ def test_run_command_defaults_to_current_user(mock_run_job_action, tmp_path):
     with open(user_profile_file, 'w') as f:
         yaml.dump(user_profile, f)
 
-    mock_action_instance = mock_run_job_action.return_value
-    mock_action_instance.run.return_value = ("Job submitted: 12345", "12345")
+    mock_action_instance = mock_agent_class.return_value
+    mock_action_instance.run.return_value = ("Job submitted: 12345", "12345", False)
 
     # 2. Act
     with patch("getpass.getuser", return_value=test_user):

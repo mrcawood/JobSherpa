@@ -81,21 +81,21 @@ class RunJobAction:
             # Add recipe-specific args, which have the highest precedence
             template_context.update(recipe.get("template_args", {}))
 
-            # Check for missing requirements
-            missing_params = []
-            required_params = self.system_config.get("job_requirements", [])
+            # --- 2. Validate Final Context ---
+            missing_or_empty_params = []
+            # We now require job_name as a standard parameter
+            required_params = self.system_config.get("job_requirements", []) + ["job_name"]
             for param in required_params:
-                if param not in template_context or template_context.get(param) is None:
-                    missing_params.append(param)
-
-            if missing_params:
-                # For now, we will only ask for the first missing parameter to keep the
-                # conversation simple.
-                param_needed = missing_params[0]
+                if param not in template_context or not template_context.get(param):
+                    missing_or_empty_params.append(param)
+            
+            if missing_or_empty_params:
+                # Ask for the first missing or empty parameter
+                param_needed = missing_or_empty_params[0]
                 question = f"I need a value for '{param_needed}'. What should I use?"
-                # Return the question, a None job_id, and the name of the parameter needed.
                 return question, None, True, param_needed
-
+            
+            # --- 3. Render and Submit ---
             logger.info("Rendering script from template: %s", recipe["template"])
             
             # Ensure workspace is defined for templated jobs
@@ -108,22 +108,16 @@ class RunJobAction:
                 return error_msg, None, False, None
 
             # Create a unique, isolated directory for this job run
-            job_name = context.get("job_name", "jobsherpa-run")
+            job_name = template_context.get("job_name", "jobsherpa-run")
             job_workspace = self.workspace_manager.create_job_workspace(job_name=job_name)
-            logger.info("Created isolated job directory: %s", job_workspace.job_dir)
-
-            # Add job-specific paths to the rendering context
-            context["job_dir"] = str(job_workspace.job_dir)
-            context["output_dir"] = str(job_workspace.output_dir)
-            context["slurm_dir"] = str(job_workspace.slurm_dir)
-
-            # Create a Jinja2 environment
-            template_dir = os.path.join(self.knowledge_base_dir, '..', 'tools')
-            env = jinja2.Environment(loader=jinja2.FileSystemLoader(template_dir))
             
+            # Add the job directory to the context for use in templates
+            template_context["job_dir"] = str(job_workspace.job_dir)
+
             try:
+                env = jinja2.Environment(loader=jinja2.FileSystemLoader("tools"))
                 template = env.get_template(recipe["template"])
-                rendered_script = template.render(context)
+                rendered_script = template.render(template_context)
                 logger.debug("Rendered script content:\n%s", rendered_script)
 
                 # Write the rendered script to a file in the isolated job directory
@@ -170,7 +164,7 @@ class RunJobAction:
                 try:
                     # Create a mini-template from the file string and render it with the same context
                     file_template = jinja2.Template(output_parser['file'])
-                    resolved_file = file_template.render(context)
+                    resolved_file = file_template.render(template_context)
                     output_parser['file'] = os.path.join('output', resolved_file)
                 except jinja2.TemplateError as e:
                     logger.error("Error rendering output_parser file template: %s", e)

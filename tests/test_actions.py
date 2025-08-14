@@ -14,6 +14,7 @@ MOCK_RECIPE = {
     "name": "random_number",
     "template": "random_number.sh.j2",
     "tool": "submit",
+    "template_args": {"job_name": "test-job"},
     "output_parser": {"file": "rng.txt", "parser_regex": "Random number: (\\d+)"}
 }
 MOCK_NON_TEMP_RECIPE = {"name": "hello_world", "tool": "echo", "args": ["hello"]}
@@ -21,7 +22,7 @@ MOCK_RECIPE_WITH_TEMPLATE_IN_PARSER = {
     "name": "random_number",
     "template": "random_number.sh.j2",
     "tool": "submit",
-    "template_args": {"output_file": "my_rng.txt"},
+    "template_args": {"output_file": "my_rng.txt", "job_name": "test-job"},
     "output_parser": {"file": "{{ output_file }}", "parser_regex": "Random number: (\\d+)"}
 }
 
@@ -87,7 +88,7 @@ def test_run_job_action_renders_and_executes_template(run_job_action, tmp_path):
     # 2. Act
     with patch("jinja2.Environment.get_template", return_value=mock_template), \
          patch("builtins.open", mock_open()) as m_open:
-        response, job_id = run_job_action.run("prompt")
+        response, job_id, _, _ = run_job_action.run("prompt")
 
     # 3. Assert
     # Assert RAG and workspace were used
@@ -125,11 +126,10 @@ def test_run_job_action_fails_with_missing_requirements(run_job_action):
     run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE)
 
     # 2. Act
-    response, job_id = run_job_action.run("prompt")
+    response, job_id, _, _ = run_job_action.run("prompt")
 
     # 3. Assert
-    assert "I need the following information" in response
-    assert "some_other_thing" in response
+    assert "I need a value for 'some_other_thing'" in response
     assert job_id is None
     run_job_action.tool_executor.execute.assert_not_called()
 
@@ -144,7 +144,7 @@ def test_run_job_action_executes_non_templated_job(run_job_action):
     run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_NON_TEMP_RECIPE)
 
     # 2. Act
-    response, job_id = run_job_action.run("prompt")
+    response, job_id, _, _ = run_job_action.run("prompt")
 
     # 3. Assert
     # RAG is not invoked when _find_matching_recipe is mocked directly
@@ -185,7 +185,7 @@ def test_run_job_action_handles_job_submission_failure(run_job_action, tmp_path)
     # 2. Act
     with patch("jinja2.Environment.get_template", return_value=mock_template), \
          patch("builtins.open", mock_open()):
-        response, job_id = run_job_action.run("prompt")
+        response, job_id, _, _ = run_job_action.run("prompt")
 
     # 3. Assert
     # Assert that the submission was attempted
@@ -311,8 +311,10 @@ def test_run_job_action_asks_for_missing_parameters(run_job_action):
     run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE)
     
     # 2. Act
-    response, job_id = run_job_action.run(prompt="Run the random number generator")
+    response, job_id, is_waiting, param_needed = run_job_action.run(prompt="Run the random number generator")
     
     # 3. Assert
     assert job_id is None
-    assert "I need the following information to run this job: allocation." in response
+    assert is_waiting is True
+    assert param_needed == "allocation"
+    assert "I need a value for 'allocation'" in response

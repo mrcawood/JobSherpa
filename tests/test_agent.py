@@ -55,6 +55,7 @@ def test_agent_run_delegates_to_conversation_manager(
         knowledge_base_dir="kb"
     )
     manager_instance = mock_conversation_manager.return_value
+    manager_instance.handle_prompt.return_value = ("response", "123", False)
     
     prompt = "Test prompt"
     agent.run(prompt)

@@ -22,22 +22,6 @@ class ConversationManager:
         """Returns True if the manager is waiting for a follow-up response."""
         return self._is_waiting
 
-    def _parse_user_response(self, response: str) -> dict:
-        """A simple parser to extract key-value pairs from a user's response."""
-        # This is a very basic implementation. A more robust solution would
-        # use a proper NLP entity extraction model.
-        parts = response.lower().split()
-        context = {}
-        if "allocation" in parts:
-            try:
-                # Find the value after the keyword "allocation"
-                idx = parts.index("allocation") + 1
-                if idx < len(parts):
-                    context["allocation"] = parts[idx]
-            except (ValueError, IndexError):
-                pass
-        return context
-
     def handle_prompt(self, prompt: str):
         if self._is_waiting and self._pending_action and self._param_needed:
             # --- We are in a multi-turn conversation ---

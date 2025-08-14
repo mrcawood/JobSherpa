@@ -41,6 +41,7 @@ def test_conversation_manager_routes_to_query_history_action():
     mock_query_history_action = MagicMock()
     
     mock_classifier.classify.return_value = "query_history"
+    mock_query_history_action.run.return_value = "Some history response"
     
     # 2. Initialize Manager with Mocks
     manager = ConversationManager(
@@ -78,10 +79,10 @@ def test_conversation_manager_handles_multi_turn_conversation():
     mock_intent_classifier.classify.return_value = "run_job"
     # Simulate RunJobAction asking for a missing parameter
     mock_run_job_action.run.return_value = (
-        "I need an allocation. What allocation should I use?", None, True, "allocation"
+        "I need an allocation...", None, True, "allocation"
     )
     
-    response, _ = manager.handle_prompt("Run my job")
+    response, _, _ = manager.handle_prompt("Run my job")
     
     # Assert that the manager asked the question and is now waiting for a response
     assert "I need an allocation" in response
@@ -95,13 +96,13 @@ def test_conversation_manager_handles_multi_turn_conversation():
         "Job submitted with ID: 12345", "12345", False, None
     )
     
-    response, _ = manager.handle_prompt("use allocation abc-123")
+    response, _, _ = manager.handle_prompt("use allocation abc-123")
     
     # Assert that the manager used the new context and submitted the job
     mock_intent_classifier.classify.assert_not_called()
     mock_run_job_action.run.assert_called_with(
         prompt="Run my job",
-        context={"allocation": "abc-123"}
+        context={"allocation": "use allocation abc-123"}
     )
     assert "Job submitted with ID: 12345" in response
     assert not manager.is_waiting_for_input()
