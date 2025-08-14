@@ -8,24 +8,34 @@ The previous objective was to implement a full, end-to-end workflow for a dynami
 
 ---
 
-## Current Goal: Implement a Scoped Workspace
+## Current Goal: Implement Persistent User Configuration and Scoped Workspace
 
-The primary objective of the next development cycle is to make the agent's file operations explicit and safe. Currently, the agent reads and writes files in the current working directory, which is implicit and potentially dangerous. We will introduce the concept of a "workspace" to manage all file interactions.
+Based on recent real-world testing, we've identified the need for a more robust way to manage user preferences and the agent's file-based operations. This goal evolves the previous "Scoped Workspace" idea into a more comprehensive solution that prepares the agent for a multi-user future.
+
+**The Vision:** The agent's context (e.g., user identity, workspace location) should always be explicit. This is achieved by making the user's profile a persistent, "living" configuration file that the agent can read and, in the future, modify based on conversational commands. This architecture is designed to scale seamlessly from a single-user CLI tool to a multi-user web service, where a single agent daemon will serve requests from many users by loading their respective profiles.
 
 **Definition of Done:**
--   The agent's constructor accepts a `workspace` path. All file operations (script generation, output file parsing) are constrained to this directory.
--   The `ToolExecutor` is updated to execute all commands *from within* the workspace directory.
--   The `random_number.sh.j2` template is updated to refer to the output file using a path relative to the workspace.
--   The agent, when rendering a template, will first write the rendered script to a file inside the workspace (e.g., `.jobsherpa/scripts/job_12345.sh`).
--   The `ToolExecutor` will now execute this script file directly, rather than piping content via stdin.
--   The CLI is updated with a `--workspace` option to allow users to specify the execution context.
--   All relevant tests are updated to use and verify the workspace logic, likely by creating a temporary directory for each test run.
+
+1.  **Persistent User Configuration:**
+    -   A new `jobsherpa config` command is added to the CLI.
+    -   This command supports `get <key>` and `set <key> <value>` subcommands to read and write to the user's profile YAML file (e.g., `knowledge_base/user/mcawood.yaml`).
+    -   This provides the foundational mechanism for a persistent, modifiable user memory.
+
+2.  **Scoped Workspace Implementation:**
+    -   The agent is refactored to always load the user profile specified by the `--user-profile` flag.
+    -   The agent looks for a `workspace` key within the loaded user profile to determine the directory for all operations.
+    -   All commands executed by the `ToolExecutor` are run from within the workspace directory.
+    -   The agent writes all generated artifacts (rendered job scripts, output files) to predictable locations inside the workspace (e.g., `.jobsherpa/scripts/`, `outputs/`).
+    -   The `--workspace` CLI flag is removed in favor of the persistent configuration managed by `jobsherpa config`.
+    -   All relevant tests are updated to use and verify this new configuration-driven workspace logic.
 
 ---
 
 ## Future Vision & Long-Term Goals
 
 -   **Learn from Existing Scripts:** A powerful future feature will be the ability for the agent to read and learn from a user's existing job scripts. This could dramatically speed up onboarding, allowing the agent to quickly understand a user's established workflows, preferred applications, and common parameters. This could be triggered by pointing the agent to a directory or by uploading a script file.
+-   **Conversational Configuration:** Build a natural language layer on top of the `jobsherpa config` mechanism, allowing users to manage their settings with prompts like "Update my workspace to /path/to/new/project" or "What is my default allocation?".
+-   **Multi-User Web Portal:** Evolve the agent into a centralized, long-running daemon that can serve requests from a web-based UI, authenticating users and loading their specific profiles to provide a personalized, multi-user experience.
 
 ---
 

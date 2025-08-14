@@ -16819,7 +16819,333 @@ _**Assistant**_
 I'm currently focused on debugging the job script rendering. The user's feedback highlights that partition and allocation values are missing. My initial investigation, based on the debug output, confirms that the SBATCH directives for these parameters are indeed empty in the generated script.
 
 
+**Tracing Context Merging Issues**
+
+I've identified the root cause; the context merging logic in `JobSherpaAgent.run` isn't correctly incorporating the user's profile defaults. This is occurring because of how it constructs the template rendering context. I'm focusing on fixing the logic to ensure the user's specified partition and allocation are correctly passed.
+
+
+**Investigating Profile Loading**
+
+I've reviewed the `JobSherpaAgent.__init__` method. It appears the system and user configurations are loaded correctly, but I suspect the merging order in `JobSherpaAgent.run` is flawed. Specifically, the user defaults are being overwritten incorrectly by the recipe-specific arguments. The `partition` and `allocation` values are probably defined in the user profile, so these parameters must overwrite the system profile but *not* the application recipe.
+
+
+**Pinpointing Contextual Overwrites**
+
+I've reviewed the `run` method and pinpointed the core problem: the merging order in the context construction. The user profile's defaults overwrite the system defaults, as intended. However, the recipe-specific arguments then overwrite *both* the system and user defaults. This explains why partition and allocation are missing from the final script. The next step is modifying the context to prioritize user settings.
+
+
+**Uncovering Missing User Profile**
+
+I'm examining the `JobSherpaAgent.run` method's context merging again. The debug logs show the system profile loading but *not* the user profile. My hypothesis is a missing user profile, possibly due to a CLI issue. The current `context.update` logic is fine.
+
+
+**Diagnosing User Configuration Omission**
+
+I've just realized the user didn't include the `--user-profile` flag in their CLI command, so the user defaults weren't being loaded at all. That explains the empty SBATCH directives! The logic is sound, but the user's command wasn't correctly utilizing it. The next step is to improve the agent by failing gracefully if essential user settings are missing.
+
+
+**Improving User Experience**
+
+I'm reviewing the agent's validation step. I plan to add code that verifies the presence of required parameters from the system profile before script rendering. If any required parameters are missing after context merging, a clear error message will be displayed to the user instead of silently rendering an incomplete script.
+
+
+**Enhancing Error Handling**
+
+I'm now focusing on improving the agent's error handling. Instead of silently rendering incomplete scripts, I plan to validate the final context against system-defined job requirements. If essential parameters are missing post-context merging, a clear error message will prevent incorrect submissions.
+
+
+**Addressing Missing Profile Values**
+
+I'm now refactoring the validation to trigger during script rendering. If any parameters are missing *after* the context merging, the agent will halt and inform the user of the missing, essential job settings. This ensures the user receives a clear error message instead of incomplete, invalid SBATCH directives.
+
+
 </details></think>
+
+---
+
+
+
+You are exactly right, and the debug log shows the problem perfectly.
+
+The values for `partition` and `allocation` are empty because the user profile, which contains your defaults, was never loaded.
+
+Looking back at the command you ran:
+`jobsherpa --system-profile vista --debug "Generate a random number for me"`
+
+You correctly specified the system profile (`--system-profile vista`), but the command is missing the `--user-profile mcawood` flag. Without that flag, the agent has no knowledge of your user-specific defaults, so the template renders those values as empty strings, causing `sbatch` to fail.
+
+However, your point is excellent. The agent shouldn't just fail silently and let `sbatch` complain. It should be smart enough to know that the "vista" system *requires* a partition and allocation, and it should stop with a clear error if those values are missing.
+
+This is the perfect opportunity to make the agent more robust. I will implement a validation step.
+
+Here is the plan:
+1.  **Add a validation test:** I'll first add a new test that runs the agent with a system profile that has requirements but *without* a user profile, and I'll assert that it returns a clear error message. This test will fail initially.
+2.  **Implement the validation logic:** I will then update the `JobSherpaAgent` to check the `job_requirements` from the system profile. Before it even tries to render the template, it will verify that all required parameters (like `partition` and `allocation`) are present in the combined context. If not, it will stop and return an informative error message.
+
+This will solve the immediate problem and make the agent much more user-friendly in the future.
+
+I'll start by adding the new failing test.
+
+---
+
+<details><summary>Edit file: tests/test_agent.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 33, lines removed: undefined
+
+```diff
+@@ -251,3 +251,36 @@
+              # Assert that values from the recipe were also rendered
+              assert "#SBATCH --job-name=test-rng-job" in rendered_script
++ 
++ def test_agent_fails_gracefully_with_missing_requirements():
++     """
++     Tests that if a system requires parameters (e.g., partition) and
++     they are not provided by any profile or recipe, the agent returns
++     an informative error instead of trying to submit a broken script.
++     """
++     # Note: No user_profile is provided here
++     agent = JobSherpaAgent(
++         dry_run=False,
++         system_profile="vista"
++     )
++     
++     # Mock the RAG pipeline to return a simple recipe
++     with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
++         mock_document = MagicMock()
++         mock_document.meta = {
++             "name": "random_number_generator",
++             "template": "random_number.sh.j2",
++             "template_args": {"job_name": "test-rng-job"}, # Missing partition/allocation
++             "tool": "submit"
++         }
++         mock_pipeline_run.return_value = {"documents": [mock_document]}
++         
++         # The agent should not even attempt to run a subprocess
++         with patch("subprocess.run") as mock_subprocess:
++             response, job_id = agent.run("Generate a random number")
++             
++             assert job_id is None
++             assert "Missing required job parameters" in response
++             assert "partition" in response
++             assert "allocation" in response
++             mock_subprocess.assert_not_called()
+  
+```
+
+</details>
+
+---
+
+Now, let's run `pytest` to see our new test fail.
+
+---
+
+```bash
+/Users/mcawood/dev/JobSherpa/.venv/bin/pytest
+```
+
+```
+
+=============================================================== test session starts ================================================================
+platform darwin -- Python 3.13.3, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/mcawood/dev/JobSherpa
+configfile: pyproject.toml
+plugins: anyio-4.10.0, typeguard-4.4.4
+collected 14 items                                                                                                                                 
+
+tests/test_agent.py ........F                                                                                                                [ 64%]
+tests/test_job_state_tracker.py ....                                                                                                         [ 92%]
+tests/test_tool_executor.py .                                                                                                                [100%]
+
+===================================================================== FAILURES =====================================================================
+______________________________________________ test_agent_fails_gracefully_with_missing_requirements _______________________________________________
+
+    def test_agent_fails_gracefully_with_missing_requirements():
+        """
+        Tests that if a system requires parameters (e.g., partition) and
+        they are not provided by any profile or recipe, the agent returns
+        an informative error instead of trying to submit a broken script.
+        """
+        # Note: No user_profile is provided here
+        agent = JobSherpaAgent(
+            dry_run=False,
+            system_profile="vista"
+        )
+    
+        # Mock the RAG pipeline to return a simple recipe
+        with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
+            mock_document = MagicMock()
+            mock_document.meta = {
+                "name": "random_number_generator",
+                "template": "random_number.sh.j2",
+                "template_args": {"job_name": "test-rng-job"}, # Missing partition/allocation
+                "tool": "submit"
+            }
+            mock_pipeline_run.return_value = {"documents": [mock_document]}
+    
+            # The agent should not even attempt to run a subprocess
+            with patch("subprocess.run") as mock_subprocess:
+>               response, job_id = agent.run("Generate a random number")
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_agent.py:279: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+jobsherpa/agent/agent.py:204: in run
+    job_id = self._parse_job_id(execution_result)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+jobsherpa/agent/agent.py:134: in _parse_job_id
+    match = re.search(r"Submitted batch job (\S+)", output)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+pattern = 'Submitted batch job (\\S+)', string = <MagicMock name='run().stdout' id='4404725808'>, flags = 0
+
+    def search(pattern, string, flags=0):
+        """Scan through string looking for a match to the pattern, returning
+        a Match object, or None if no match was found."""
+>       return _compile(pattern, flags).search(string)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: expected string or bytes-like object, got 'MagicMock'
+
+/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/re/__init__.py:177: TypeError
+--------------------------------------------------------------- Captured stderr call ---------------------------------------------------------------
+Updating BM25 representation...: 100%|██████████| 3/3 [00:00<00:00, 151601.35 docs/s]
+================================================================= warnings summary =================================================================
+.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12
+  /Users/mcawood/dev/JobSherpa/.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12: UserWarning: pkg_resources is deprecated as an API. S
+ee https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from usi
+ng this package or pin to Setuptools<81.
+
+    import pkg_resources
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================================================= short test summary info ==============================================================
+FAILED tests/test_agent.py::test_agent_fails_gracefully_with_missing_requirements - TypeError: expected string or bytes-like object, got 'MagicMock'
+===================================================== 1 failed, 13 passed, 1 warning in 3.95s ======================================================
+```
+
+---
+
+The test failed, but not for the reason we wanted. The `TypeError` is happening because our mock `subprocess.run` isn't configured to return a string for `stdout`, which the `_parse_job_id` function expects.
+
+However, the core goal is to prevent `subprocess.run` from being called at all. The fact that it *is* being called (and its mock is causing a downstream error) is still a valid "Red" state. The agent is trying to execute a command when it should have stopped with an error.
+
+Now for the "Green" phase. I will implement the validation logic in the `JobSherpaAgent.run` method. It will check the system profile's `job_requirements` against the final rendering context and return an error if any requirements are missing.
+
+---
+
+<details><summary>Edit file: jobsherpa/agent/agent.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 10, lines removed: undefined
+
+```diff
+@@ -167,4 +167,14 @@
+              context.update(recipe.get("template_args", {}))
+  
++             # Validate that all system requirements are met
++             if self.system_config and "job_requirements" in self.system_config:
++                 missing_reqs = [
++                     req for req in self.system_config["job_requirements"] if req not in context
++                 ]
++                 if missing_reqs:
++                     error_msg = f"Missing required job parameters for system '{self.system_config['name']}': {', '.join(missing_reqs)}"
++                     logger.error(error_msg)
++                     return error_msg, None
++ 
+              logger.info("Rendering script from template: %s", template_name)
+  
+```
+
+</details>
+
+---
+
+Now that the validation logic is in place, I'll run `pytest`. I expect all tests to pass.
+
+---
+
+```bash
+/Users/mcawood/dev/JobSherpa/.venv/bin/pytest
+```
+
+```
+
+=============================================================== test session starts ================================================================
+platform darwin -- Python 3.13.3, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/mcawood/dev/JobSherpa
+configfile: pyproject.toml
+plugins: anyio-4.10.0, typeguard-4.4.4
+collected 14 items                                                                                                                                 
+
+tests/test_agent.py .........                                                                                                                [ 64%]
+tests/test_job_state_tracker.py ....                                                                                                         [ 92%]
+tests/test_tool_executor.py .                                                                                                                [100%]
+
+================================================================= warnings summary =================================================================
+.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12
+  /Users/mcawood/dev/JobSherpa/.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12: UserWarning: pkg_resources is deprecated as an API. S
+ee https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from usi
+ng this package or pin to Setuptools<81.
+
+    import pkg_resources
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+========================================================== 14 passed, 1 warning in 2.77s ===========================================================
+```
+
+---
+
+Excellent. All tests passed. We have successfully implemented the parameter validation logic. The agent is now more robust and will provide clear error messages when job requirements are not met, preventing malformed jobs from ever being submitted.
+
+This is a great place to commit our work.
+
+---
+
+```bash
+git add . && git commit -m "feat: Add validation for required job parameters" -m "Implements a validation step in the agent to ensure that all job parameters required by a system profile are present before attempting to render a script." -m "- The agent now checks the 'job_requirements' list in the system profile against the combined template context." -m "- If any parameters are missing, the agent returns an informative error message and does not attempt to submit the job."
+```
+
+```
+
+[main dd90af5] feat: Add validation for required job parameters
+ 4 files changed, 79 insertions(+)
+```
+
+---
+
+The validation feature has been implemented and committed.
+
+Now, you should be able to get a much more informative error message on your HPC system. Please `git pull` the latest changes and run the command **without** the `--user-profile` flag one more time:
+
+```bash
+jobsherpa --system-profile vista --debug "Generate a random number for me"
+```
+
+Instead of a `sbatch` error, you should now see a clean error message from our agent telling you exactly which parameters are missing. This confirms the validation is working as expected. Afterward, you can add the `--user-profile mcawood` flag, and the job should finally submit successfully.
+
+---
+
+_**User**_
+
+great the script runs and produces a random number! lets wrap things up for today. before we do we docuement some things
+
+1. a very powerful future feature idea: the ability for the agent to read and learn about existing user job scripts. either by reading them directly from the filesystem, or by the user uploading a file. this could dramatically speed up the onboarding process, where an agent can learn about a workflow. 
+
+2. file location considerations: we have not considered at all where files will exist. currently when we run a job, the output file is simply placed in the current working directory. we need to work on this. I don't know where the input files (ie job script is located)
+
+lets update the DEVELOPMENT document to reflect our recent work, and add the new feature for future work
+
+---
+
+_**Assistant**_
+
+
 
 ---
 
