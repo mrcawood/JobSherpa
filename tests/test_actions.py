@@ -299,7 +299,7 @@ def test_query_history_action_handles_job_not_found(query_history_action):
 
     # 3. Assert
     query_history_action.job_history.get_job_by_id.assert_called_with("99999")
-    assert "Sorry, I'm not sure how to answer that." in response
+    assert "Sorry, I couldn't find any information for job ID 99999." in response
 
 def test_query_history_action_handles_running_job(query_history_action):
     """
@@ -397,3 +397,11 @@ def test_run_job_action_gathers_workspace_and_system_from_context(run_job_action
     assert "I need a workspace" not in response
     assert run_job_action.system_config["name"] == "mock_slurm"
     assert run_job_action.workspace_manager.base_path == Path("/tmp/test_ws")
+
+def test_query_history_action_routes_to_id_query(query_history_action):
+    """
+    Tests that a query containing a job ID is correctly routed.
+    """
+    query_history_action._get_job_by_id_summary = MagicMock(return_value="Summary for job 12345")
+    query_history_action.run("what is the status of job 12345")
+    query_history_action._get_job_by_id_summary.assert_called_once_with("12345")

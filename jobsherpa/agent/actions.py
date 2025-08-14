@@ -250,20 +250,14 @@ class QueryHistoryAction:
             return self._get_last_job_status()
         elif re.search(r"(?=.*result)(?=.*last)", prompt_lower):
             return self._get_last_job_result()
-        # Add more rules here as we expand the toolbox
-        else:
-            # Fallback to the original "get result by ID" logic for now
-            job_id_match = re.search(r"(\d+)", prompt)
-            if job_id_match:
-                job_id = job_id_match.group(1)
-                job_info = self.job_history.get_job_by_id(job_id)
-                if job_info:
-                    # For a specific ID, let's provide a more comprehensive summary
-                    status = self.job_history.check_job_status(job_id)
-                    result = job_info.get('result', 'Not available')
-                    return f"Job {job_id} status is {status}. Result: {result}"
-            return "Sorry, I'm not sure how to answer that."
-            
+        
+        job_id_match = re.search(r"job\s+(\d+)", prompt_lower)
+        if job_id_match:
+            job_id = job_id_match.group(1)
+            return self._get_job_by_id_summary(job_id)
+
+        return "Sorry, I'm not sure how to answer that."
+
     def _get_last_job_status(self) -> str:
         """
         Retrieves the status of the most recent job.
@@ -299,3 +293,25 @@ class QueryHistoryAction:
             return "I can't find any jobs in your history."
             
         return f"The result of job {latest_job['job_id']} is: {latest_job.get('result', 'Not available')}."
+
+    def _get_job_by_id_summary(self, job_id: str) -> str:
+        """
+        Retrieves a comprehensive summary for a specific job ID.
+        
+        This tool finds the job in the history, actively checks its current
+        status, and returns a formatted string containing both the status
+        and any available result.
+        
+        Args:
+            job_id: The ID of the job to summarize.
+            
+        Returns:
+            A string containing the job summary, or a message if the job is not found.
+        """
+        job_info = self.job_history.get_job_by_id(job_id)
+        if not job_info:
+            return f"Sorry, I couldn't find any information for job ID {job_id}."
+            
+        status = self.job_history.check_job_status(job_id)
+        result = job_info.get('result', 'Not available')
+        return f"Job {job_id} status is {status}. Result: {result}"
