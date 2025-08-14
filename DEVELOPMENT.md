@@ -30,6 +30,10 @@ The agent's current `run` command is synchronous; it blocks the user's terminal 
 
 ## Future Vision & Long-Term Goals
 
+-   **Conversational Onboarding & Initialization:** The ultimate goal is to create a truly intelligent agent that can guide a new user through the entire setup process. This involves moving beyond static `config` commands to a stateful, interactive dialogue where the agent can ask questions, understand user queries about available resources, and dynamically populate the user's configuration file based on the conversation. For example:
+    -   *Agent:* "I see you don't have a default system set up. What HPC system will you be primarily using?"
+    -   *User:* "I need to run on H100 GPUs, what are my options?"
+    -   *Agent:* "I see that Vista and Stampede3 both have H100 GPUs available. Which would you like as your default?"
 -   **Learn from Existing Scripts:** A powerful future feature will be the ability for the agent to read and learn from a user's existing job scripts. This could dramatically speed up onboarding, allowing the agent to quickly understand a user's established workflows, preferred applications, and common parameters. This could be triggered by pointing the agent to a directory or by uploading a script file.
 -   **Conversational Configuration:** Build a natural language layer on top of the `jobsherpa config` mechanism, allowing users to manage their settings with prompts like "Update my workspace to /path/to/new/project" or "What is my default allocation?".
 -   **Multi-User Web Portal:** Evolve the agent into a centralized, long-running daemon that can serve requests from a web-based UI, authenticating users and loading their specific profiles to provide a personalized, multi-user experience.
