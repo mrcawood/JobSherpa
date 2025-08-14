@@ -6,8 +6,11 @@ import logging
 import uuid
 from typing import Optional
 from jobsherpa.agent.tool_executor import ToolExecutor
-from jobsherpa.agent.job_state_tracker import JobStateTracker
+from jobsherpa.agent.job_history import JobHistory
 from jobsherpa.agent.workspace_manager import WorkspaceManager
+from jobsherpa.agent.intent_classifier import IntentClassifier
+from jobsherpa.agent.conversation_manager import ConversationManager
+from jobsherpa.agent.actions import RunJobAction, QueryHistoryAction
 from haystack.document_stores import InMemoryDocumentStore
 from haystack.nodes import BM25Retriever
 from haystack import Pipeline
@@ -21,44 +24,53 @@ class JobSherpaAgent:
     This class is UI-agnostic and exposes a clean API.
     """
     def __init__(
-        self, 
-        dry_run: bool = False, 
+        self,
+        dry_run: bool = False,
         knowledge_base_dir: str = "knowledge_base",
         system_profile: Optional[str] = None,
         user_profile: Optional[str] = None,
         user_config: Optional[dict] = None # For testing
     ):
         """
-        Initializes the agent.
+        Initializes the agent and all its components.
         """
-        self.dry_run = dry_run
-        self.tool_executor = ToolExecutor(dry_run=self.dry_run)
-        self.knowledge_base_dir = knowledge_base_dir
-        
+        # --- 1. Load Core Configs ---
         self.user_config = user_config or self._load_user_config(user_profile)
-        self.workspace = self.user_config.get("defaults", {}).get("workspace") if self.user_config else None
+        
+        if not self.user_config or "defaults" not in self.user_config:
+            raise ValueError("User profile is missing 'defaults' section.")
 
-        if self.workspace:
-            self.workspace_manager = WorkspaceManager(base_path=self.workspace)
-        else:
-            self.workspace_manager = None
+        self.workspace = self.user_config.get("defaults", {}).get("workspace")
+        if not self.workspace:
+             raise ValueError(
+                "User profile must contain a 'workspace' key in the 'defaults' section. "
+                "You can set it by running: jobsherpa config set workspace <path>"
+            )
         
-        # Determine the system profile to use
-        effective_system_profile = system_profile
-        if not effective_system_profile:
-            if self.user_config:
-                effective_system_profile = self.user_config.get("defaults", {}).get("system")
-            
-            if not effective_system_profile:
-                raise ValueError(
-                    "User profile must contain a 'system' key in the 'defaults' section. "
-                    "You can set it by running: jobsherpa config set system <system_name>"
-                )
+        history_dir = os.path.join(self.workspace, ".jobsherpa")
+        os.makedirs(history_dir, exist_ok=True)
+        history_file = os.path.join(history_dir, "history.json")
         
-        self.system_config = self._load_system_config(effective_system_profile)
-        self.tracker = JobStateTracker()
-        self.rag_pipeline = self._initialize_rag_pipeline()
-        logger.info("JobSherpaAgent initialized for system: %s", effective_system_profile)
+        # --- 2. Initialize Components ---
+        job_history = JobHistory(history_file_path=history_file)
+        workspace_manager = WorkspaceManager(base_path=self.workspace)
+        intent_classifier = IntentClassifier()
+        
+        # --- 3. Initialize Action Handlers (passing dependencies) ---
+        run_job_action = RunJobAction(
+            job_history=job_history,
+            workspace_manager=workspace_manager
+        )
+        query_history_action = QueryHistoryAction(job_history=job_history)
+
+        # --- 4. Initialize the Conversation Manager ---
+        self.conversation_manager = ConversationManager(
+            intent_classifier=intent_classifier,
+            run_job_action=run_job_action,
+            query_history_action=query_history_action,
+        )
+
+        logger.info("JobSherpaAgent initialized.")
 
     def start(self):
         """Starts the agent's background threads."""
@@ -106,11 +118,11 @@ class JobSherpaAgent:
 
     def _load_user_config(self, profile_name: Optional[str]):
         """Loads a specific user configuration from the knowledge base."""
+        # This will be refactored later
         if not profile_name:
             return None
         
-        user_file = os.path.join(self.knowledge_base_dir, "user", f"{profile_name}.yaml")
-        logger.debug("Loading user profile from: %s", user_file)
+        user_file = os.path.join("knowledge_base", "user", f"{profile_name}.yaml")
         if os.path.exists(user_file):
             with open(user_file, 'r') as f:
                 return yaml.safe_load(f)
@@ -159,122 +171,12 @@ class JobSherpaAgent:
             return match.group(1)
         return None
 
-    def run(self, prompt: str) -> tuple[str, Optional[str]]:
+    def run(self, prompt: str):
         """
-        The main entry point for the agent to process a user prompt.
-        Returns a user-facing response string and an optional job ID.
+        The main entry point for the agent. Delegates handling to the ConversationManager.
         """
         logger.info("Agent received prompt: '%s'", prompt)
-
-        recipe = self._find_matching_recipe(prompt)
-
-        if not recipe:
-            logger.warning("No matching recipe found for prompt.")
-            return "Sorry, I don't know how to handle that.", None
-        
-        logger.debug("Found matching recipe: %s", recipe["name"])
-
-        if "template" in recipe:
-            # Build the template rendering context
-            context = {}
-            # 1. Start with system defaults (if any)
-            if self.system_config and "defaults" in self.system_config:
-                context.update(self.system_config["defaults"])
-            # 2. Add user defaults, overwriting system defaults
-            if self.user_config and "defaults" in self.user_config:
-                context.update(self.user_config["defaults"])
-            # 3. Add recipe-specific args, overwriting user/system defaults
-            context.update(recipe.get("template_args", {}))
-
-            # Validate that all system requirements are met
-            if self.system_config and "job_requirements" in self.system_config:
-                missing_reqs = [
-                    req for req in self.system_config["job_requirements"] if req not in context
-                ]
-                if missing_reqs:
-                    error_msg = f"Missing required job parameters for system '{self.system_config['name']}': {', '.join(missing_reqs)}"
-                    logger.error(error_msg)
-                    return error_msg, None
-
-            logger.info("Rendering script from template: %s", recipe["template"])
-            
-            # Ensure workspace is defined for templated jobs
-            if not self.workspace_manager:
-                error_msg = (
-                    "Workspace must be defined in user profile for templated jobs.\n"
-                    "You can set it by running: jobsherpa config set workspace /path/to/your/workspace"
-                )
-                logger.error(error_msg)
-                return error_msg, None
-
-            # Create a unique, isolated directory for this job run
-            job_workspace = self.workspace_manager.create_job_workspace()
-            logger.info("Created isolated job directory: %s", job_workspace.job_dir)
-
-            # Add job-specific paths to the rendering context
-            context["job_dir"] = str(job_workspace.job_dir)
-            context["output_dir"] = str(job_workspace.output_dir)
-            context["slurm_dir"] = str(job_workspace.slurm_dir)
-
-            # Create a Jinja2 environment
-            template_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'tools')
-            env = jinja2.Environment(loader=jinja2.FileSystemLoader(template_dir))
-            
-            try:
-                template = env.get_template(recipe["template"])
-                rendered_script = template.render(context)
-                logger.debug("Rendered script content:\n%s", rendered_script)
-
-                # Write the rendered script to a file in the isolated job directory
-                with open(job_workspace.script_path, 'w') as f:
-                    f.write(rendered_script)
-                logger.info("Wrote rendered script to: %s", job_workspace.script_path)
-
-                # The "tool" in a templated recipe is the command to execute the script
-                submit_command = recipe["tool"]
-                if self.system_config and submit_command in self.system_config.get("commands", {}):
-                    submit_command = self.system_config["commands"][submit_command]
-
-                # The ToolExecutor will now execute from within the job directory
-                execution_result = self.tool_executor.execute(
-                    submit_command, 
-                    [job_workspace.script_path.name], 
-                    workspace=str(job_workspace.job_dir)
-                )
-
-            except jinja2.TemplateNotFound:
-                logger.error("Template '%s' not found in tools directory.", recipe["template"])
-                return f"Error: Template '{recipe['template']}' not found.", None
-            except Exception as e:
-                logger.error("Error rendering template: %s", e, exc_info=True)
-                return f"Error rendering template: {e}", None
-        else:
-            # Fallback to existing logic for non-templated recipes
-            tool_name = recipe['tool']
-            if self.system_config and tool_name in self.system_config.get("commands", {}):
-                tool_name = self.system_config["commands"][tool_name]
-            
-            args = recipe.get('args', [])
-            logger.debug("Executing non-templated tool: %s with args: %s", tool_name, args)
-            execution_result = self.tool_executor.execute(tool_name, args, workspace=self.workspace)
-
-        slurm_job_id = self._parse_job_id(execution_result)
-        if slurm_job_id:
-            job_dir_to_register = str(job_workspace.job_dir) if 'job_workspace' in locals() else self.workspace
-            # Pass the parser info and job directory to the tracker
-            output_parser = recipe.get("output_parser")
-            # If a parser exists, prepend the output directory to its file path
-            if output_parser and 'file' in output_parser:
-                output_parser['file'] = os.path.join('output', output_parser['file'])
-            
-            self.tracker.register_job(slurm_job_id, job_dir_to_register, output_parser_info=output_parser)
-            logger.info("Job %s submitted successfully.", slurm_job_id)
-            response = f"Found recipe '{recipe['name']}'.\nJob submitted successfully with ID: {slurm_job_id}"
-            return response, slurm_job_id
-
-        logger.info("Execution finished, but no job ID was parsed.")
-        response = f"Found recipe '{recipe['name']}'.\nExecution result: {execution_result}"
-        return response, None
+        return self.conversation_manager.handle_prompt(prompt)
 
     def get_job_result(self, job_id: str) -> Optional[str]:
         """Gets the parsed result of a completed job."""
