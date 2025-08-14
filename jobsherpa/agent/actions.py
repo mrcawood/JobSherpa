@@ -298,11 +298,12 @@ class QueryHistoryAction:
         Returns:
             A string describing the job's result, or a message if no jobs are found.
         """
-        latest_job = self.job_history.get_latest_job()
-        if not latest_job:
+        latest_job_id = self.job_history.get_latest_job_id()
+        if not latest_job_id:
             return "I can't find any jobs in your history."
             
-        return f"The result of job {latest_job['job_id']} is: {latest_job.get('result', 'Not available')}."
+        result = self.job_history.get_result(latest_job_id)
+        return f"The result of job {latest_job_id} is: {result or 'Not available'}."
 
     def _get_job_by_id_summary(self, job_id: str) -> str:
         """

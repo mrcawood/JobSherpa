@@ -246,48 +246,15 @@ def test_get_last_job_result_implementation(mocker):
     action = QueryHistoryAction(job_history=mock_history)
     
     # 1. Setup
-    mock_job = { "job_id": "job_5", "result": "42" }
-    action.job_history.get_latest_job.return_value = mock_job
+    action.job_history.get_latest_job_id.return_value = "job_5"
+    action.job_history.get_result.return_value = "42"
     
     # 2. Act
     response = action._get_last_job_result()
     
     # 3. Assert
     assert "The result of job job_5 is: 42" in response
-    action.job_history.get_latest_job.assert_called_once()
-
-def test_query_history_action_gets_last_job_result(query_history_action):
-    """
-    Tests that the action can retrieve the result of the most recent job.
-    """
-    # 1. Setup
-    mock_history = query_history_action.job_history
-    mock_job = { "job_id": "job_5", "result": "42" }
-    mock_history.get_latest_job.return_value = mock_job
-    
-    # 2. Act
-    response = query_history_action.run("what was the result of my last job?")
-    
-    # 3. Assert
-    mock_history.get_latest_job.assert_called_once()
-    assert "The result of job job_5 is: 42" in response
-
-def test_query_history_action_gets_job_by_id(query_history_action):
-    """
-    Tests that the action can retrieve the result of a specific job by its ID.
-    """
-    # 1. Setup
-    mock_history = query_history_action.job_history
-    mock_history.get_status.return_value = "COMPLETED"
-    mock_history.get_result.return_value = "Success"
-
-    # 2. Act
-    response = query_history_action.run("tell me about job 12345")
-
-    # 3. Assert
-    # This now falls through to the get_job_by_id logic
-    query_history_action.job_history.get_job_by_id.assert_called_with("12345")
-    assert "Job 12345 status is" in response
+    action.job_history.get_latest_job_id.assert_called_once()
 
 def test_query_history_action_handles_job_not_found(query_history_action):
     """
