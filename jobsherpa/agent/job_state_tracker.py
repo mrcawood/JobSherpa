@@ -4,6 +4,7 @@ import subprocess
 import re
 import logging
 from typing import Optional
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class JobStateTracker:
         self._stop_event = threading.Event()
         self.cycle_done_event = threading.Event()
 
-    def register_job(self, job_id: str, output_parser_info: Optional[dict] = None):
+    def register_job(self, job_id: str, job_directory: str, output_parser_info: Optional[dict] = None):
         """
         Registers a new job with a default 'PENDING' status.
         """
@@ -26,10 +27,11 @@ class JobStateTracker:
             self._jobs[job_id] = {
                 "status": "PENDING",
                 "start_time": time.time(),
+                "job_directory": job_directory,
                 "output_parser": output_parser_info,
                 "result": None
             }
-            logger.info("Registered new job: %s", job_id)
+            logger.info("Registered new job: %s in directory: %s", job_id, job_directory)
 
     def get_status(self, job_id: str) -> Optional[str]:
         """
@@ -37,15 +39,16 @@ class JobStateTracker:
         """
         return self._jobs.get(job_id, {}).get("status")
 
-    def set_status(self, job_id: str, status: str):
+    def set_status(self, job_id: str, new_status: str):
         """
         Updates the status of a specific job.
         """
         if job_id in self._jobs:
-            if self._jobs[job_id]["status"] != status:
-                logger.info("Job %s status changed to: %s", job_id, status)
-            self._jobs[job_id]["status"] = status
-            if status == "COMPLETED" and self._jobs[job_id]["output_parser"]:
+            if self._jobs[job_id]["status"] != new_status:
+                logger.info("Job %s status changed to: %s", job_id, new_status)
+            self._jobs[job_id]["status"] = new_status
+            # If job is done, try to parse its output
+            if new_status == "COMPLETED" and self._jobs[job_id].get("output_parser"):
                 self._parse_job_output(job_id)
     
     def get_result(self, job_id: str) -> Optional[str]:
@@ -59,19 +62,23 @@ class JobStateTracker:
             return
 
         parser_info = job_info["output_parser"]
-        output_file = parser_info.get("file")
-        regex = parser_info.get("parser_regex")
+        relative_output_file = parser_info.get("file")
+        job_directory = job_info.get("job_directory")
+        regex_pattern = parser_info.get("parser_regex")
 
-        if not output_file or not regex:
-            logger.warning("Job %s is missing 'file' or 'parser_regex' in its output_parser info.", job_id)
+        if not all([relative_output_file, job_directory, regex_pattern]):
+            logger.warning("Job %s is missing information required for output parsing.", job_id)
             return
 
-        logger.info("Parsing output file '%s' for job %s", output_file, job_id)
+        # The output file path is now relative to the job's unique directory
+        output_file_path = os.path.join(job_directory, relative_output_file)
+        
+        logger.info("Parsing output file '%s' for job %s", output_file_path, job_id)
         try:
-            with open(output_file, 'r') as f:
+            with open(output_file_path, 'r') as f:
                 content = f.read()
             
-            match = re.search(regex, content)
+            match = re.search(regex_pattern, content)
             if match:
                 result = match.group(1)
                 self._jobs[job_id]["result"] = result
@@ -79,9 +86,9 @@ class JobStateTracker:
             else:
                 logger.warning("Regex did not find a match in output file for job %s", job_id)
         except FileNotFoundError:
-            logger.warning("Could not find output file %s to parse for job %s.", output_file, job_id)
+            logger.warning("Could not find output file %s to parse for job %s.", output_file_path, job_id)
         except Exception as e:
-            logger.warning("Error parsing file %s for job %s: %s", output_file, job_id, e, exc_info=True)
+            logger.warning("Error parsing file %s for job %s: %s", output_file_path, job_id, e, exc_info=True)
 
     def _parse_squeue_status(self, squeue_output: str, job_id: str) -> Optional[str]:
         """Parses the status from squeue output."""

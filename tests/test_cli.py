@@ -203,4 +203,7 @@ def test_run_command_defaults_to_current_user(mock_execute, mock_find_recipe, tm
     # Verify the workspace was correctly used
     mock_execute.assert_called_once()
     call_kwargs = mock_execute.call_args.kwargs
-    assert call_kwargs.get("workspace") == str(workspace_path)
+    # The workspace passed to the executor should now be the unique job sub-directory
+    assert len(list(workspace_path.iterdir())) == 1 # A single job directory was created
+    job_dir = list(workspace_path.iterdir())[0]
+    assert call_kwargs.get("workspace") == str(job_dir)

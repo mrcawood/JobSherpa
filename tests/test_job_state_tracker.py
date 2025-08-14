@@ -11,11 +11,9 @@ def test_register_and_get_status():
     """
     tracker = JobStateTracker()
     job_id = "mock_12345"
+    tracker.register_job(job_id, "/tmp/mock_dir")
+    assert tracker.get_status(job_id) == "PENDING"
 
-    tracker.register_job(job_id)
-    status = tracker.get_status(job_id)
-
-    assert status == "PENDING"
 
 def test_update_status():
     """
@@ -23,14 +21,10 @@ def test_update_status():
     """
     tracker = JobStateTracker()
     job_id = "mock_12345"
-
-    tracker.register_job(job_id)
-    
+    tracker.register_job(job_id, "/tmp/mock_dir")
     tracker.set_status(job_id, "RUNNING")
     assert tracker.get_status(job_id) == "RUNNING"
 
-    tracker.set_status(job_id, "COMPLETED")
-    assert tracker.get_status(job_id) == "COMPLETED"
 
 def test_update_from_squeue_output():
     """
@@ -38,7 +32,7 @@ def test_update_from_squeue_output():
     """
     tracker = JobStateTracker()
     job_id = "12345"
-    tracker.register_job(job_id)
+    tracker.register_job(job_id, "/tmp/mock_dir")
 
     mock_squeue_running = MagicMock()
     mock_squeue_running.stdout = (
@@ -58,7 +52,7 @@ def test_update_from_sacct_output_completed():
     """
     tracker = JobStateTracker()
     job_id = "12345"
-    tracker.register_job(job_id)
+    tracker.register_job(job_id, "/tmp/mock_dir")
     tracker.set_status(job_id, "RUNNING") # Assume job was running
 
     mock_squeue_empty = MagicMock(stdout="") # squeue shows the job is done

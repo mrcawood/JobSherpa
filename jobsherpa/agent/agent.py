@@ -168,6 +168,8 @@ class JobSherpaAgent:
         
         logger.debug("Found matching recipe: %s", recipe["name"])
 
+        job_dir = self.workspace # Default job dir is the workspace itself
+
         # Check if the recipe uses a template
         if "template" in recipe:
             template_name = recipe["template"]
@@ -204,6 +206,20 @@ class JobSherpaAgent:
                 logger.error(error_msg)
                 return error_msg, None
 
+            # Create a unique, isolated directory for this job run
+            job_id = str(uuid.uuid4())
+            job_dir = os.path.join(self.workspace, job_id)
+            output_dir = os.path.join(job_dir, "output")
+            slurm_dir = os.path.join(job_dir, "slurm")
+            os.makedirs(output_dir, exist_ok=True)
+            os.makedirs(slurm_dir, exist_ok=True)
+            logger.info("Created isolated job directory: %s", job_dir)
+
+            # Add job-specific paths to the rendering context
+            context["job_dir"] = job_dir
+            context["output_dir"] = output_dir
+            context["slurm_dir"] = slurm_dir
+
             # Create a Jinja2 environment
             template_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'tools')
             env = jinja2.Environment(loader=jinja2.FileSystemLoader(template_dir))
@@ -213,11 +229,9 @@ class JobSherpaAgent:
                 rendered_script = template.render(context)
                 logger.debug("Rendered script content:\n%s", rendered_script)
 
-                # Write the rendered script to a file in the workspace
-                scripts_dir = os.path.join(self.workspace, ".jobsherpa", "scripts")
-                os.makedirs(scripts_dir, exist_ok=True)
-                script_filename = f"job-{uuid.uuid4()}.sh"
-                script_path = os.path.join(scripts_dir, script_filename)
+                # Write the rendered script to a file in the isolated job directory
+                script_filename = "job_script.sh"
+                script_path = os.path.join(job_dir, script_filename)
                 with open(script_path, 'w') as f:
                     f.write(rendered_script)
                 logger.info("Wrote rendered script to: %s", script_path)
@@ -227,8 +241,8 @@ class JobSherpaAgent:
                 if self.system_config and submit_command in self.system_config.get("commands", {}):
                     submit_command = self.system_config["commands"][submit_command]
 
-                # The ToolExecutor will now receive the script path as an argument
-                execution_result = self.tool_executor.execute(submit_command, [script_path], workspace=self.workspace)
+                # The ToolExecutor will now execute from within the job directory
+                execution_result = self.tool_executor.execute(submit_command, [script_filename], workspace=job_dir)
 
             except jinja2.TemplateNotFound:
                 logger.error("Template '%s' not found in tools directory.", template_name)
@@ -246,14 +260,18 @@ class JobSherpaAgent:
             logger.debug("Executing non-templated tool: %s with args: %s", tool_name, args)
             execution_result = self.tool_executor.execute(tool_name, args, workspace=self.workspace)
 
-        job_id = self._parse_job_id(execution_result)
-        if job_id:
-            # Pass the parser info to the tracker when registering the job
+        slurm_job_id = self._parse_job_id(execution_result)
+        if slurm_job_id:
+            # Pass the parser info and job directory to the tracker
             output_parser = recipe.get("output_parser")
-            self.tracker.register_job(job_id, output_parser_info=output_parser)
-            logger.info("Job %s submitted successfully.", job_id)
-            response = f"Found recipe '{recipe['name']}'.\nJob submitted successfully with ID: {job_id}"
-            return response, job_id
+            # If a parser exists, prepend the output directory to its file path
+            if output_parser and 'file' in output_parser:
+                output_parser['file'] = os.path.join('output', output_parser['file'])
+            
+            self.tracker.register_job(slurm_job_id, job_dir, output_parser_info=output_parser)
+            logger.info("Job %s submitted successfully.", slurm_job_id)
+            response = f"Found recipe '{recipe['name']}'.\nJob submitted successfully with ID: {slurm_job_id}"
+            return response, slurm_job_id
 
         logger.info("Execution finished, but no job ID was parsed.")
         response = f"Found recipe '{recipe['name']}'.\nExecution result: {execution_result}"

@@ -3,7 +3,8 @@
 # This is a dynamically generated script for a random number job.
 #
 #SBATCH --job-name={{ job_name }}
-#SBATCH --output={{ output_file }}
+#SBATCH --output=slurm/slurm-%j.out
+#SBATCH --error=slurm/slurm-%j.err
 #SBATCH --partition={{ partition }}
 #SBATCH --account={{ allocation }}
 #SBATCH --nodes=1
@@ -12,5 +13,5 @@
 
 # Generate a random number and write it to the output file
 echo "Generating a random number..."
-echo $RANDOM > {{ output_file }}
+echo $RANDOM > output/{{ output_file }}
 echo "Random number generation complete."
