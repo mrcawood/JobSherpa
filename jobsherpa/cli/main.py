@@ -5,6 +5,7 @@ import os
 import getpass
 from typing import Optional
 # from jobsherpa.agent.agent import JobSherpaAgent # <-- This will be moved
+from jobsherpa.agent.config_manager import ConfigManager
 
 app = typer.Typer()
 config_app = typer.Typer()
@@ -23,31 +24,34 @@ def get_user_profile_path(profile_name: Optional[str], profile_path: Optional[st
 
 @config_app.command("set")
 def config_set(
-    key: str,
-    value: str,
-    user_profile: Optional[str] = typer.Option(None, "--user-profile", help="The name of the user profile to use."),
-    user_profile_path: Optional[str] = typer.Option(None, "--user-profile-path", help="Direct path to user profile file (for testing).")
+    key: str = typer.Argument(..., help="The configuration key to set (e.g., 'workspace')."),
+    value: str = typer.Argument(..., help="The value to set."),
+    user_profile: Optional[str] = typer.Option(None, "--user-profile", help="The user profile to modify."),
+    user_profile_path: Optional[str] = typer.Option(None, "--user-profile-path", help="Direct path to the user profile YAML file.", hidden=True),
 ):
-    """Set a configuration key-value pair in the user profile."""
-    path = get_user_profile_path(user_profile, user_profile_path)
+    """Set a default configuration value in your user profile."""
+    profile_path = get_user_profile_path(user_profile, user_profile_path)
+    manager = ConfigManager(config_path=profile_path)
     
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    
-    config = {}
-    if os.path.exists(path):
-        with open(path, 'r') as f:
-            config = yaml.safe_load(f) or {}
+    config = None
+    if os.path.exists(profile_path):
+        try:
+            config = manager.load()
+        except Exception:
+            pass # Will create a new one below
             
-    if "defaults" not in config:
-        config["defaults"] = {}
-        
-    config["defaults"][key] = value
-    
-    with open(path, 'w') as f:
-        yaml.dump(config, f)
-        
-    print(f"Updated configuration in {path}: set {key} = {value}")
+    if config is None:
+        from jobsherpa.config import UserConfig, UserConfigDefaults
+        # Create a new config object with empty strings for required fields
+        config = UserConfig(defaults=UserConfigDefaults(workspace="", system=""))
+
+    if not hasattr(config.defaults, key):
+        print(f"Error: Unknown configuration key '{key}'. Valid keys are: workspace, system, partition, allocation.")
+        raise typer.Exit(code=1)
+
+    setattr(config.defaults, key, value)
+    manager.save(config)
+    print(f"Updated '{key}' in profile: {profile_path}")
 
 @config_app.command("get")
 def config_get(

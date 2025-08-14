@@ -31,7 +31,7 @@ def test_config_set_and_get(tmp_path):
         ],
     )
     assert result_set.exit_code == 0
-    assert "Updated configuration" in result_set.stdout
+    assert "Updated 'workspace' in profile" in result_set.stdout
 
     # Verify the file content
     with open(user_profile_file, 'r') as f:
@@ -174,3 +174,38 @@ def test_run_command_defaults_to_current_user(mock_run_job_action, tmp_path):
     assert result.exit_code == 0, f"CLI command failed: {result.stdout}"
     assert "Job submitted: 12345" in result.stdout
     mock_action_instance.run.assert_called_once_with("Do something")
+
+
+def test_config_set_preserves_comments(tmp_path):
+    """
+    Tests that `jobsherpa config set` uses the new ConfigManager
+    to update a value while preserving existing comments in the YAML file.
+    """
+    # 1. Setup
+    profile_dir = tmp_path / "knowledge_base" / "user"
+    profile_dir.mkdir(parents=True)
+    profile_file = profile_dir / "testuser.yaml"
+    
+    initial_content = (
+        "# Main user settings\n"
+        "defaults:\n"
+        "  # The most important setting\n"
+        "  workspace: /old/path\n"
+    )
+    profile_file.write_text(initial_content)
+
+    # 2. Act
+    with patch("getpass.getuser", return_value="testuser"):
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        result = runner.invoke(app, ["config", "set", "workspace", "/new/path"])
+        os.chdir(original_cwd)
+
+    # 3. Assert
+    assert result.exit_code == 0
+    
+    final_content = profile_file.read_text()
+    assert "# Main user settings" in final_content
+    assert "# The most important setting" in final_content
+    assert "workspace: /new/path" in final_content
+    assert "/old/path" not in final_content

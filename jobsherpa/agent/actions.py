@@ -3,11 +3,12 @@ import os
 import yaml
 import jinja2
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 from jobsherpa.agent.job_history import JobHistory
 from jobsherpa.agent.workspace_manager import WorkspaceManager
 from jobsherpa.agent.tool_executor import ToolExecutor
+from jobsherpa.config import UserConfig
 from haystack import Pipeline
 from haystack.document_stores import InMemoryDocumentStore
 from haystack.nodes import BM25Retriever
@@ -24,7 +25,7 @@ class RunJobAction:
         workspace_manager: WorkspaceManager,
         tool_executor: ToolExecutor,
         knowledge_base_dir: str,
-        user_config: dict,
+        user_config: Union[UserConfig, dict],
         system_config: dict,
     ):
         self.job_history = job_history
@@ -35,7 +36,7 @@ class RunJobAction:
         self.system_config = system_config
         self.rag_pipeline = self._initialize_rag_pipeline()
 
-    def run(self, prompt: str) -> tuple[str, Optional[str]]:
+    def run(self, prompt: str, context: Optional[dict] = None) -> tuple[str, Optional[str]]:
         """
         The main entry point for the agent to process a user prompt.
         Returns a user-facing response string and an optional job ID.
@@ -57,20 +58,31 @@ class RunJobAction:
             if self.system_config and "defaults" in self.system_config:
                 context.update(self.system_config["defaults"])
             # 2. Add user defaults, overwriting system defaults
-            if self.user_config and "defaults" in self.user_config:
-                context.update(self.user_config["defaults"])
+            if self.user_config:
+                if isinstance(self.user_config, UserConfig):
+                    # Support both Pydantic v2 (model_dump) and v1 (dict)
+                    defaults_obj = self.user_config.defaults
+                    try:
+                        defaults_dict = defaults_obj.model_dump(exclude_none=True)  # Pydantic v2
+                    except AttributeError:
+                        defaults_dict = defaults_obj.dict(exclude_none=True)  # Pydantic v1
+                    context.update(defaults_dict)
+                elif isinstance(self.user_config, dict) and "defaults" in self.user_config:
+                    context.update(self.user_config["defaults"])
             # 3. Add recipe-specific args, overwriting user/system defaults
             context.update(recipe.get("template_args", {}))
 
-            # Validate that all system requirements are met
-            if self.system_config and "job_requirements" in self.system_config:
-                missing_reqs = [
-                    req for req in self.system_config["job_requirements"] if req not in context
-                ]
-                if missing_reqs:
-                    error_msg = f"Missing required job parameters for system '{self.system_config['name']}': {', '.join(missing_reqs)}"
-                    logger.error(error_msg)
-                    return error_msg, None
+            # Check for missing requirements
+            missing_params = []
+            required_params = self.system_config.get("job_requirements", [])
+            for param in required_params:
+                if param not in context or context.get(param) is None:
+                    missing_params.append(param)
+
+            if missing_params:
+                param_str = ", ".join(missing_params)
+                # Instead of raising an error, return a question to the user.
+                return f"I need the following information to run this job: {param_str}. What should I use for these values?", None
 
             logger.info("Rendering script from template: %s", recipe["template"])
             

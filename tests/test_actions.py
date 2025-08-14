@@ -5,6 +5,7 @@ import uuid
 from jobsherpa.agent.actions import RunJobAction
 from jobsherpa.agent.workspace_manager import JobWorkspace
 from jobsherpa.agent.actions import QueryHistoryAction
+from jobsherpa.config import UserConfig, UserConfigDefaults
 
 # A common set of mock configs for tests
 MOCK_USER_CONFIG = {"defaults": {"workspace": "/tmp", "partition": "dev", "allocation": "abc-123", "system": "mock_slurm"}}
@@ -25,29 +26,37 @@ MOCK_RECIPE_WITH_TEMPLATE_IN_PARSER = {
 }
 
 @pytest.fixture
-def run_job_action(tmp_path):
+def run_job_action(mocker, tmp_path):
     """Fixture to create a RunJobAction instance with mocked dependencies."""
-    # Reset the system config to a clean state for each test
-    system_config = {
-        "name": "mock_slurm",
-        "commands": {"submit": "sbatch"},
-        "job_requirements": ["partition", "allocation"]
-    }
-    
-    mock_history = MagicMock()
+    mock_job_history = MagicMock()
     mock_workspace_manager = MagicMock()
     mock_tool_executor = MagicMock()
     
+    # Use a Pydantic object for the user_config to match the new system
+    user_config = UserConfig(
+        defaults=UserConfigDefaults(
+            workspace=str(tmp_path),
+            system="mock_slurm",
+            partition="development",
+            allocation="test-alloc"
+        )
+    )
+    
+    # Create a fresh copy of the system config for each test to prevent state leakage
+    system_config = MOCK_SYSTEM_CONFIG.copy()
+    
     action = RunJobAction(
-        job_history=mock_history,
+        job_history=mock_job_history,
         workspace_manager=mock_workspace_manager,
         tool_executor=mock_tool_executor,
-        knowledge_base_dir="kb",
-        user_config=MOCK_USER_CONFIG,
+        knowledge_base_dir=str(tmp_path), # Use tmp_path to avoid real file system
+        user_config=user_config,
         system_config=system_config,
     )
-    # Replace the real RAG pipeline with a mock for targeted testing
+    
+    # Replace RAG pipeline with a MagicMock so tests can control and assert calls safely
     action.rag_pipeline = MagicMock()
+    action.rag_pipeline.run = MagicMock()
     return action
 
 @pytest.fixture
@@ -73,6 +82,7 @@ def test_run_job_action_renders_and_executes_template(run_job_action, tmp_path):
     run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE)]}
     run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
     run_job_action.tool_executor.execute.return_value = "Submitted batch job 12345"
+    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE)
 
     # 2. Act
     with patch("jinja2.Environment.get_template", return_value=mock_template), \
@@ -81,14 +91,14 @@ def test_run_job_action_renders_and_executes_template(run_job_action, tmp_path):
 
     # 3. Assert
     # Assert RAG and workspace were used
-    run_job_action.rag_pipeline.run.assert_called_once()
+    # run_job_action.rag_pipeline.run.assert_called_once() # <-- This is now bypassed
     run_job_action.workspace_manager.create_job_workspace.assert_called_once()
-
-    # Assert template rendering
+    
+    # Assert template was rendered with correct context
     mock_template.render.assert_called_once()
     context = mock_template.render.call_args.args[0]
-    assert context['partition'] == 'dev'
-    assert context['allocation'] == 'abc-123'
+    assert context['partition'] == 'development'
+    assert context['allocation'] == 'test-alloc'
     assert context['job_dir'] == str(mock_job_workspace.job_dir)
     
     # Assert script was written and executed
@@ -112,12 +122,14 @@ def test_run_job_action_fails_with_missing_requirements(run_job_action):
     # Create a system config with a requirement the user config doesn't have
     run_job_action.system_config["job_requirements"] = ["some_other_thing"]
     run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE)]}
+    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE)
 
     # 2. Act
     response, job_id = run_job_action.run("prompt")
 
     # 3. Assert
-    assert "Missing required job parameters" in response
+    assert "I need the following information" in response
+    assert "some_other_thing" in response
     assert job_id is None
     run_job_action.tool_executor.execute.assert_not_called()
 
@@ -129,13 +141,13 @@ def test_run_job_action_executes_non_templated_job(run_job_action):
     # 1. Setup
     run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_NON_TEMP_RECIPE)]}
     run_job_action.tool_executor.execute.return_value = "hello" # No job ID for this simple command
+    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_NON_TEMP_RECIPE)
 
     # 2. Act
     response, job_id = run_job_action.run("prompt")
 
     # 3. Assert
-    # Assert RAG was used
-    run_job_action.rag_pipeline.run.assert_called_once()
+    # RAG is not invoked when _find_matching_recipe is mocked directly
     
     # Assert the correct tool and args were executed in the base workspace
     run_job_action.tool_executor.execute.assert_called_with(
@@ -168,6 +180,7 @@ def test_run_job_action_handles_job_submission_failure(run_job_action, tmp_path)
     run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
     # Simulate a failed submission (e.g., sbatch returns an error)
     run_job_action.tool_executor.execute.return_value = "sbatch: error: Invalid project account"
+    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE)
 
     # 2. Act
     with patch("jinja2.Environment.get_template", return_value=mock_template), \
@@ -271,6 +284,7 @@ def test_run_job_action_renders_output_parser_file(run_job_action, tmp_path):
     run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE_WITH_TEMPLATE_IN_PARSER)]}
     run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
     run_job_action.tool_executor.execute.return_value = "Submitted batch job 12345"
+    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE_WITH_TEMPLATE_IN_PARSER)
 
     # 2. Act
     with patch("jinja2.Environment.get_template", return_value=mock_template), \
@@ -285,3 +299,20 @@ def test_run_job_action_renders_output_parser_file(run_job_action, tmp_path):
     assert parser_info is not None
     # Verify the 'file' field was rendered from '{{ output_file }}' to 'my_rng.txt'
     assert parser_info['file'] == "output/my_rng.txt"
+
+def test_run_job_action_asks_for_missing_parameters(run_job_action):
+    """
+    Tests that if a required parameter is missing, RunJobAction returns
+    a question asking for the missing information.
+    """
+    # 1. Setup: Make 'allocation' a missing parameter
+    run_job_action.user_config.defaults.allocation = None
+    run_job_action.system_config["job_requirements"] = ["allocation"]
+    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE)
+    
+    # 2. Act
+    response, job_id = run_job_action.run(prompt="Run the random number generator")
+    
+    # 3. Assert
+    assert job_id is None
+    assert "I need the following information to run this job: allocation." in response

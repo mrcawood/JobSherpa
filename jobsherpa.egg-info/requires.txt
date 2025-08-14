@@ -1,8 +1,10 @@
-typer[all]
+typer
 PyYAML
 farm-haystack
 setuptools
 Jinja2
+pydantic
+ruamel.yaml
 
 [inference]
 farm-haystack[inference]
@@ -10,3 +12,5 @@ farm-haystack[inference]
 [test]
 pytest
 freezegun
+pytest-cov
+pytest-mock

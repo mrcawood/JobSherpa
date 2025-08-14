@@ -4,11 +4,13 @@ version = "0.1.0"
 description = "An AI agent for HPC systems."
 authors = [{ name = "Your Name", email = "you@example.com" }]
 dependencies = [
-    "typer[all]",
+    "typer",
     "PyYAML",
     "farm-haystack",
     "setuptools",
     "Jinja2",
+    "pydantic",
+    "ruamel.yaml",
 ]
 
 [project.scripts]
@@ -18,10 +20,10 @@ jobsherpa = "jobsherpa.cli.main:run_app"
 test = [
     "pytest",
     "freezegun",
+    "pytest-cov",
+    "pytest-mock",
 ]
-inference = [
-    "farm-haystack[inference]",
-]
+inference = ["farm-haystack[inference]"]
 
 [tool.setuptools.packages.find]
 where = ["."]
