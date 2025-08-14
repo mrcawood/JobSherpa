@@ -36,10 +36,14 @@ class RunJobAction:
         self.system_config = system_config
         self.rag_pipeline = self._initialize_rag_pipeline()
 
-    def run(self, prompt: str, context: Optional[dict] = None) -> tuple[str, Optional[str]]:
+    def run(self, prompt: str, context: Optional[dict] = None) -> tuple[str, Optional[str], bool, Optional[str]]:
         """
         The main entry point for the agent to process a user prompt.
-        Returns a user-facing response string and an optional job ID.
+        Returns:
+            - A user-facing response string.
+            - An optional job ID.
+            - A boolean indicating if the agent is waiting for more input.
+            - The specific parameter needed, if waiting.
         """
         logger.info("Agent received prompt: '%s'", prompt)
 
@@ -47,7 +51,7 @@ class RunJobAction:
 
         if not recipe:
             logger.warning("No matching recipe found for prompt.")
-            return "Sorry, I don't know how to handle that.", None
+            return "Sorry, I don't know how to handle that.", None, False, None
         
         logger.debug("Found matching recipe: %s", recipe["name"])
 
@@ -85,7 +89,7 @@ class RunJobAction:
                 param_needed = missing_params[0]
                 question = f"I need a value for '{param_needed}'. What should I use?"
                 # Return the question, a None job_id, and the name of the parameter needed.
-                return question, None, param_needed
+                return question, None, True, param_needed
 
             logger.info("Rendering script from template: %s", recipe["template"])
             
@@ -96,7 +100,7 @@ class RunJobAction:
                     "You can set it by running: jobsherpa config set workspace /path/to/your/workspace"
                 )
                 logger.error(error_msg)
-                return error_msg, None
+                return error_msg, None, False, None
 
             # Create a unique, isolated directory for this job run
             job_name = context.get("job_name", "jobsherpa-run")
@@ -136,10 +140,10 @@ class RunJobAction:
 
             except jinja2.TemplateNotFound:
                 logger.error("Template '%s' not found in tools directory.", recipe["template"])
-                return f"Error: Template '{recipe['template']}' not found.", None
+                return f"Error: Template '{recipe['template']}' not found.", None, False, None
             except Exception as e:
                 logger.error("Error rendering template: %s", e, exc_info=True)
-                return f"Error rendering template: {e}", None
+                return f"Error rendering template: {e}", None, False, None
         else:
             # Fallback to existing logic for non-templated recipes
             tool_name = recipe['tool']
@@ -169,11 +173,11 @@ class RunJobAction:
             self.job_history.register_job(slurm_job_id, job_dir_to_register, output_parser_info=output_parser)
             logger.info("Job %s submitted successfully.", slurm_job_id)
             response = f"Found recipe '{recipe['name']}'.\nJob submitted successfully with ID: {slurm_job_id}"
-            return response, slurm_job_id
+            return response, slurm_job_id, False, None
 
         logger.info("Execution finished, but no job ID was parsed.")
         response = f"Found recipe '{recipe['name']}'.\nExecution result: {execution_result}"
-        return response, None
+        return response, None, False, None
 
     def _initialize_rag_pipeline(self) -> Pipeline:
         """Initializes the Haystack RAG pipeline and indexes documents."""

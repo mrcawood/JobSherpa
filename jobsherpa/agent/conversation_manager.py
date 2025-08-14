@@ -49,15 +49,16 @@ class ConversationManager:
                 prompt=self._pending_prompt, context=self._context
             )
             
-            if not is_waiting:
+            self._is_waiting = is_waiting
+            self._param_needed = param_needed
+
+            if not self._is_waiting:
                 # If the action is now complete, reset the state
-                self._is_waiting = False
                 self._pending_action = None
                 self._pending_prompt = None
                 self._context = {}
-                self._param_needed = None
                 
-            return response, job_id, is_waiting
+            return response, job_id, self._is_waiting
 
         # --- This is a new conversation ---
         intent = self.intent_classifier.classify(prompt)
@@ -69,9 +70,9 @@ class ConversationManager:
 
         if handler:
             if intent == "run_job":
-                response, job_id, param_needed = handler.run(prompt=prompt, context={})
+                response, job_id, is_waiting, param_needed = handler.run(prompt=prompt, context={})
                 # If the handler asks a question, set the state
-                if param_needed:
+                if is_waiting:
                     self._is_waiting = True
                     self._pending_action = handler
                     self._pending_prompt = prompt

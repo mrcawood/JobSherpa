@@ -13,7 +13,7 @@ def test_conversation_manager_routes_to_run_job_action():
     mock_query_history_action = MagicMock()
     
     mock_classifier.classify.return_value = "run_job"
-    mock_run_job_action.run.return_value = ("Success", "12345") # Ensure it returns a tuple
+    mock_run_job_action.run.return_value = ("Success", "12345", False, None) # Ensure it returns a tuple
     
     # 2. Initialize Manager with Mocks
     manager = ConversationManager(
@@ -78,7 +78,7 @@ def test_conversation_manager_handles_multi_turn_conversation():
     mock_intent_classifier.classify.return_value = "run_job"
     # Simulate RunJobAction asking for a missing parameter
     mock_run_job_action.run.return_value = (
-        "I need an allocation. What allocation should I use?", None
+        "I need an allocation. What allocation should I use?", None, True, "allocation"
     )
     
     response, _ = manager.handle_prompt("Run my job")
@@ -92,7 +92,7 @@ def test_conversation_manager_handles_multi_turn_conversation():
     mock_intent_classifier.reset_mock()
     # Simulate RunJobAction now succeeding with the new context
     mock_run_job_action.run.return_value = (
-        "Job submitted with ID: 12345", "12345"
+        "Job submitted with ID: 12345", "12345", False, None
     )
     
     response, _ = manager.handle_prompt("use allocation abc-123")
