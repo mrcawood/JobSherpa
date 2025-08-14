@@ -80,9 +80,12 @@ class RunJobAction:
                     missing_params.append(param)
 
             if missing_params:
-                param_str = ", ".join(missing_params)
-                # Instead of raising an error, return a question to the user.
-                return f"I need the following information to run this job: {param_str}. What should I use for these values?", None
+                # For now, we will only ask for the first missing parameter to keep the
+                # conversation simple.
+                param_needed = missing_params[0]
+                question = f"I need a value for '{param_needed}'. What should I use?"
+                # Return the question, a None job_id, and the name of the parameter needed.
+                return question, None, param_needed
 
             logger.info("Rendering script from template: %s", recipe["template"])
             

@@ -93,12 +93,14 @@ class JobSherpaAgent:
 
         logger.info("JobSherpaAgent initialized.")
 
-    def run(self, prompt: str):
+    def run(self, prompt: str) -> tuple[str, Optional[str], bool]:
         """
-        The main entry point for the agent. Delegates handling to the ConversationManager.
+        Runs a single turn of the conversation.
+        Returns the agent's response, an optional job ID, and a boolean
+        indicating if the agent is waiting for more input.
         """
-        logger.info("Agent received prompt: '%s'", prompt)
-        return self.conversation_manager.handle_prompt(prompt)
+        response, job_id, is_waiting = self.conversation_manager.handle_prompt(prompt)
+        return response, job_id, is_waiting
 
     def get_job_status(self, job_id: str) -> Optional[str]:
         """Gets the status of a job from the tracker."""

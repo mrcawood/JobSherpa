@@ -16,6 +16,7 @@ class ConversationManager:
         self._pending_action = None
         self._pending_prompt = None
         self._context = {}
+        self._param_needed = None # The specific parameter we are asking for
 
     def is_waiting_for_input(self) -> bool:
         """Returns True if the manager is waiting for a follow-up response."""
@@ -38,25 +39,25 @@ class ConversationManager:
         return context
 
     def handle_prompt(self, prompt: str):
-        if self._is_waiting and self._pending_action:
+        if self._is_waiting and self._pending_action and self._param_needed:
             # --- We are in a multi-turn conversation ---
-            # Parse the user's response to get the missing parameters
-            new_context = self._parse_user_response(prompt)
-            self._context.update(new_context)
+            # Assume the user's entire response is the value for the needed parameter
+            self._context[self._param_needed] = prompt.strip()
             
             # Re-run the pending action with the updated context
-            response, job_id = self._pending_action.run(
+            response, job_id, is_waiting, param_needed = self._pending_action.run(
                 prompt=self._pending_prompt, context=self._context
             )
             
-            # Reset the state if the action is now complete
-            if job_id is not None:
+            if not is_waiting:
+                # If the action is now complete, reset the state
                 self._is_waiting = False
                 self._pending_action = None
                 self._pending_prompt = None
                 self._context = {}
+                self._param_needed = None
                 
-            return response, job_id, self._is_waiting
+            return response, job_id, is_waiting
 
         # --- This is a new conversation ---
         intent = self.intent_classifier.classify(prompt)
@@ -68,12 +69,13 @@ class ConversationManager:
 
         if handler:
             if intent == "run_job":
-                response, job_id = handler.run(prompt=prompt, context={})
-                # If the handler asks a question (no job ID returned), set the state
-                if job_id is None:
+                response, job_id, param_needed = handler.run(prompt=prompt, context={})
+                # If the handler asks a question, set the state
+                if param_needed:
                     self._is_waiting = True
                     self._pending_action = handler
                     self._pending_prompt = prompt
+                    self._param_needed = param_needed
                 return response, job_id, self._is_waiting
             else: # It's a query action
                 response = handler.run(prompt=prompt)
