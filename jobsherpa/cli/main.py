@@ -73,6 +73,28 @@ def config_get(
         print(f"Error: Key '{key}' not found in user profile.")
         raise typer.Exit(1)
 
+@config_app.command("show")
+def config_show(
+    user_profile: Optional[str] = typer.Option(
+        None, "--user-profile", help="The name of the user profile to show."
+    ),
+    user_profile_path: Optional[str] = typer.Option(
+        None, "--user-profile-path", help="Direct path to the user profile file (for testing)."
+    ),
+):
+    """
+    Shows the entire contents of the user's configuration file.
+    """
+    profile_path = get_user_profile_path(user_profile, user_profile_path)
+    
+    if not os.path.exists(profile_path):
+        print(f"Error: User profile not found at {profile_path}")
+        raise typer.Exit(code=1)
+        
+    with open(profile_path, 'r') as f:
+        print(f.read())
+
+
 @app.command()
 def run(
     prompt: str,
