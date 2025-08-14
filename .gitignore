@@ -1,5 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+jobsherpa/agent/__pycache__/
+jobsherpa/cli/__pycache__/
 *.py[cod]
 *$py.class
 
