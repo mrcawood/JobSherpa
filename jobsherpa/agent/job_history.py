@@ -5,19 +5,41 @@ import re
 import logging
 from typing import Optional
 import os
+import json
 
 logger = logging.getLogger(__name__)
 
-class JobStateTracker:
+class JobHistory:
     """
-    Manages the state of active and completed jobs.
+    Manages the state of active and completed jobs, with persistence.
     """
-    def __init__(self):
-        """Initializes the tracker with an in-memory job store."""
-        self._jobs = {}
+    def __init__(self, history_file_path: Optional[str] = None):
+        self.history_file_path = history_file_path
+        self._jobs = self._load_state()
         self._monitor_thread = None
         self._stop_event = threading.Event()
         self.cycle_done_event = threading.Event()
+
+    def _load_state(self) -> dict:
+        """Loads the job history from the JSON file."""
+        if self.history_file_path and os.path.exists(self.history_file_path):
+            try:
+                with open(self.history_file_path, 'r') as f:
+                    logger.debug("Loading job history from %s", self.history_file_path)
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                logger.error("Failed to load job history file: %s", e)
+        return {}
+
+    def _save_state(self):
+        """Saves the current job history to the JSON file."""
+        if self.history_file_path:
+            try:
+                with open(self.history_file_path, 'w') as f:
+                    json.dump(self._jobs, f, indent=4)
+                    logger.debug("Saved job history to %s", self.history_file_path)
+            except IOError as e:
+                logger.error("Failed to save job history file: %s", e)
 
     def register_job(self, job_id: str, job_directory: str, output_parser_info: Optional[dict] = None):
         """
@@ -32,6 +54,7 @@ class JobStateTracker:
                 "result": None
             }
             logger.info("Registered new job: %s in directory: %s", job_id, job_directory)
+            self._save_state()
 
     def get_status(self, job_id: str) -> Optional[str]:
         """
@@ -50,6 +73,7 @@ class JobStateTracker:
             # If job is done, try to parse its output
             if new_status == "COMPLETED" and self._jobs[job_id].get("output_parser"):
                 self._parse_job_output(job_id)
+            self._save_state()
     
     def get_result(self, job_id: str) -> Optional[str]:
         """Gets the parsed result of a completed job."""
@@ -82,7 +106,8 @@ class JobStateTracker:
             if match:
                 result = match.group(1)
                 self._jobs[job_id]["result"] = result
-                logger.debug("Successfully parsed result for job %s: %s", job_id, result)
+                logger.info("Parsed result for job %s: %s", job_id, result)
+                self._save_state() # Save state after successful parsing
             else:
                 logger.warning("Regex did not find a match in output file for job %s", job_id)
         except FileNotFoundError:
