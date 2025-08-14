@@ -4,14 +4,39 @@ from freezegun import freeze_time
 from unittest.mock import MagicMock, patch, mock_open
 import yaml
 
+
+def test_agent_initialization_fails_without_system_in_profile():
+    """
+    Tests that the agent raises a ValueError if the user profile
+    lacks a required 'system' key.
+    """
+    # 1. Setup: Create a user profile *without* a system key
+    user_profile = {
+        "defaults": {
+            "workspace": "/tmp/workspace",
+            # "system" is deliberately missing
+        }
+    }
+    
+    # 2. Assert that initializing the agent raises a ValueError
+    with pytest.raises(ValueError) as excinfo:
+        JobSherpaAgent(user_config=user_profile)
+
+    # 3. Check that the error message is helpful
+    assert "User profile must contain a 'system' key" in str(excinfo.value)
+    assert "jobsherpa config set system <system_name>" in str(excinfo.value)
+
+
 def test_run_hello_world_dry_run():
     """
     Tests the agent's ability to find the 'hello world' recipe
     and execute the correct tool in dry-run mode.
     """
-    agent = JobSherpaAgent(dry_run=True)
+    # Provide a minimal valid user config to satisfy the new requirement
+    user_config = {"defaults": {"system": "mock_system"}}
+    agent = JobSherpaAgent(dry_run=True, user_config=user_config)
     
-    # Mock the RAG pipeline to ensure the correct recipe is "found"
+    # Mock the RAG pipeline to avoid dependency on real files
     with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
         mock_document = MagicMock()
         mock_document.meta = {
@@ -32,9 +57,11 @@ def test_run_hello_world_real_execution():
     Tests the agent's ability to execute the 'hello world' tool
     and parse the mock job ID from the result.
     """
-    agent = JobSherpaAgent(dry_run=False)
+    # Provide a minimal valid user config to satisfy the new requirement
+    user_config = {"defaults": {"system": "mock_system"}}
+    agent = JobSherpaAgent(dry_run=False, user_config=user_config)
 
-    # Mock the RAG pipeline to ensure the correct recipe is "found"
+    # Mock the RAG pipeline
     with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
         mock_document = MagicMock()
         mock_document.meta = {
@@ -219,19 +246,22 @@ def test_agent_parses_job_output(tmp_path):
 
 def test_agent_merges_user_and_system_profiles(tmp_path):
     """
-    Tests that the agent can load a user profile and a system profile,
-    merge their values with the recipe's arguments, and render a
-    complete job script.
+    Tests that the agent correctly merges defaults from system and user
+    profiles, with user values taking precedence.
     """
-    workspace_path = tmp_path / "workspace"
-    workspace_path.mkdir()
+    # 1. Set up the environment
+    system_profile_data = {"defaults": {"partition": "default-partition", "qos": "normal"}}
+    user_profile_data = {
+        "defaults": {
+            "partition": "user-partition", # Overwrites system
+            "allocation": "USER-123",
+            "system": "mock_system" # Required
+        }
+    }
     
-    # Note: We are now testing the loading from file, so we don't inject user_config
-    agent = JobSherpaAgent(
-        dry_run=False,
-        system_profile="vista",
-        user_profile="mcawood" # This test should load the real mcawood.yaml
-    )
+    # 2. Initialize Agent with mocked configs
+    with patch.object(JobSherpaAgent, "_load_system_config", return_value=system_profile_data):
+        agent = JobSherpaAgent(user_config=user_profile_data)
 
     # To make this test independent, we create a temporary knowledge base
     kb_path = tmp_path / "knowledge_base"
@@ -242,9 +272,10 @@ def test_agent_merges_user_and_system_profiles(tmp_path):
     user_profile_file = user_dir / "mcawood.yaml"
     user_profile = {
         "defaults": {
-            "workspace": str(workspace_path),
-            "partition": "development",
-            "allocation": "TACC-12345"
+            "workspace": str(tmp_path / "workspace"),
+            "partition": "user-partition", # Overwrites system
+            "allocation": "USER-123",
+            "system": "mock_system" # Required
         }
     }
     with open(user_profile_file, 'w') as f:
@@ -276,7 +307,7 @@ def test_agent_merges_user_and_system_profiles(tmp_path):
             agent.run("Generate a random number")
             
             # Check that the command was run from the correct workspace
-            assert mock_subprocess.call_args.kwargs["cwd"] == str(workspace_path)
+            assert mock_subprocess.call_args.kwargs["cwd"] == str(tmp_path / "workspace")
             
             # Check the content of the script file, not stdin
             script_path = mock_subprocess.call_args.args[0][1]
@@ -284,25 +315,33 @@ def test_agent_merges_user_and_system_profiles(tmp_path):
                 rendered_script = f.read()
             
             # Assert that values from the user profile were merged and rendered
-            assert "#SBATCH --partition=development" in rendered_script
-            assert "#SBATCH --account=TACC-12345" in rendered_script
+            assert "#SBATCH --partition=user-partition" in rendered_script
+            assert "#SBATCH --account=USER-123" in rendered_script
             
             # Assert that values from the recipe were also rendered
             assert "#SBATCH --job-name=test-rng-job" in rendered_script
 
 def test_agent_fails_gracefully_with_missing_requirements():
     """
-    Tests that if a system requires parameters (e.g., partition) and
-    they are not provided by any profile or recipe, the agent returns
-    an informative error instead of trying to submit a broken script.
+    Tests that the agent returns a helpful error if the final context
+    is missing a parameter required by the system profile.
     """
-    # Note: No user_profile is provided here
-    agent = JobSherpaAgent(
-        dry_run=False,
-        system_profile="vista"
-    )
-    
-    # Mock the RAG pipeline to return a simple recipe
+    system_config = {
+        "name": "TestSystem",
+        "job_requirements": ["partition", "allocation"]
+    }
+    user_config = {
+        "defaults": {
+            "partition": "development",
+            # allocation is missing
+            "system": "TestSystem" # Required
+        }
+    }
+    # Pass system_config via the constructor's expected mechanism (mocking)
+    with patch.object(JobSherpaAgent, "_load_system_config", return_value=system_config):
+        agent = JobSherpaAgent(user_config=user_config)
+
+    # Mock the RAG pipeline
     with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
         mock_document = MagicMock()
         mock_document.meta = {
@@ -319,7 +358,6 @@ def test_agent_fails_gracefully_with_missing_requirements():
             
             assert job_id is None
             assert "Missing required job parameters" in response
-            assert "partition" in response
             assert "allocation" in response
             mock_subprocess.assert_not_called()
 
@@ -335,18 +373,27 @@ def test_agent_operates_within_scoped_workspace(tmp_path):
     user_profile = {
         "defaults": {
             "workspace": str(workspace_path),
-            "partition": "development", # Added to satisfy vista requirements
-            "allocation": "TACC-12345"  # Added to satisfy vista requirements
+            "partition": "development", 
+            "allocation": "TACC-12345",
+            "system": "vista" # Required
         }
     }
 
-    # 2. Initialize the agent
+    # Create dummy vista.yaml so system config loading works
+    system_dir = tmp_path / "knowledge_base" / "system"
+    system_dir.mkdir(parents=True)
+    vista_config = {
+        "name": "vista",
+        "commands": {"submit": "sbatch"}
+    }
+    with open(system_dir / "vista.yaml", 'w') as f:
+        yaml.dump(vista_config, f)
+
+
+    # 2. Initialize the agent, pointing to our temp KB
     agent = JobSherpaAgent(
-        dry_run=False,
-        system_profile="vista",
-        # We need to load the user config directly for the agent in a test
-        # because the CLI config command is separate.
-        user_config=user_profile 
+        user_config=user_profile,
+        knowledge_base_dir=str(tmp_path / "knowledge_base")
     )
     
     # 3. Mock the RAG pipeline and subprocess
@@ -389,7 +436,8 @@ def test_agent_provides_helpful_error_for_missing_workspace(tmp_path):
     user_profile = {
         "defaults": {
             "partition": "development",
-            "allocation": "TACC-12345"
+            "allocation": "TACC-12345",
+            "system": "vista" # Required
         }
     }
     
@@ -411,3 +459,4 @@ def test_agent_provides_helpful_error_for_missing_workspace(tmp_path):
         assert job_id is None
         assert "Workspace must be defined" in response
         assert "jobsherpa config set workspace /path/to/your/workspace" in response
+

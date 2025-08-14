@@ -172,6 +172,7 @@ def test_run_command_defaults_to_current_user(mock_execute, mock_find_recipe, tm
             "workspace": str(workspace_path),
             "partition": "test-partition",
             "allocation": "TEST-123",
+            "system": "vista", # Required for the agent
         }
     }
     with open(user_profile_file, 'w') as f:
@@ -183,14 +184,15 @@ def test_run_command_defaults_to_current_user(mock_execute, mock_find_recipe, tm
     }
     mock_execute.return_value = "Submitted batch job mock_789"
 
-    # 2. Act: Run the command, mocking getuser and the Jinja2 environment loader
+    # 2. Act: Run the `run` command, mocking the user and changing the CWD
     with patch("getpass.getuser", return_value=test_user), \
          patch("jinja2.FileSystemLoader", return_value=jinja2.FileSystemLoader(str(tools_dir))):
         
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
-            result = runner.invoke(app, ["run", "Do something", "--system-profile", "vista"])
+            # Note: We no longer need --system-profile, as it's in the user's config
+            result = runner.invoke(app, ["run", "Do something"])
         finally:
             os.chdir(original_cwd)
 

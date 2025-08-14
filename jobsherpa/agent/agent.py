@@ -33,12 +33,26 @@ class JobSherpaAgent:
         self.dry_run = dry_run
         self.tool_executor = ToolExecutor(dry_run=self.dry_run)
         self.knowledge_base_dir = knowledge_base_dir
-        self.system_config = self._load_system_config(system_profile)
+        
         self.user_config = user_config or self._load_user_config(user_profile)
         self.workspace = self.user_config.get("defaults", {}).get("workspace") if self.user_config else None
+
+        # Determine the system profile to use
+        effective_system_profile = system_profile
+        if not effective_system_profile:
+            if self.user_config:
+                effective_system_profile = self.user_config.get("defaults", {}).get("system")
+            
+            if not effective_system_profile:
+                raise ValueError(
+                    "User profile must contain a 'system' key in the 'defaults' section. "
+                    "You can set it by running: jobsherpa config set system <system_name>"
+                )
+        
+        self.system_config = self._load_system_config(effective_system_profile)
         self.tracker = JobStateTracker()
         self.rag_pipeline = self._initialize_rag_pipeline()
-        logger.info("JobSherpaAgent initialized.")
+        logger.info("JobSherpaAgent initialized for system: %s", effective_system_profile)
 
     def start(self):
         """Starts the agent's background threads."""
