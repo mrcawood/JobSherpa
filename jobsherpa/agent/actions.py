@@ -140,9 +140,16 @@ class RunJobAction:
             job_dir_to_register = str(job_workspace.job_dir) if 'job_workspace' in locals() else self.workspace_manager.base_path
             # Pass the parser info and job directory to the tracker
             output_parser = recipe.get("output_parser")
-            # If a parser exists, prepend the output directory to its file path
+
+            # If a parser exists, its 'file' field might be a template. Render it.
             if output_parser and 'file' in output_parser:
-                output_parser['file'] = os.path.join('output', output_parser['file'])
+                try:
+                    # Create a mini-template from the file string and render it with the same context
+                    file_template = jinja2.Template(output_parser['file'])
+                    resolved_file = file_template.render(context)
+                    output_parser['file'] = os.path.join('output', resolved_file)
+                except jinja2.TemplateError as e:
+                    logger.error("Error rendering output_parser file template: %s", e)
             
             self.job_history.register_job(slurm_job_id, job_dir_to_register, output_parser_info=output_parser)
             logger.info("Job %s submitted successfully.", slurm_job_id)

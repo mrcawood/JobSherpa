@@ -16,6 +16,13 @@ MOCK_RECIPE = {
     "output_parser": {"file": "rng.txt", "parser_regex": "Random number: (\\d+)"}
 }
 MOCK_NON_TEMP_RECIPE = {"name": "hello_world", "tool": "echo", "args": ["hello"]}
+MOCK_RECIPE_WITH_TEMPLATE_IN_PARSER = {
+    "name": "random_number",
+    "template": "random_number.sh.j2",
+    "tool": "submit",
+    "template_args": {"output_file": "my_rng.txt"},
+    "output_parser": {"file": "{{ output_file }}", "parser_regex": "Random number: (\\d+)"}
+}
 
 @pytest.fixture
 def run_job_action(tmp_path):
@@ -246,3 +253,35 @@ def test_query_history_action_handles_running_job(query_history_action):
     mock_history.get_status.assert_called_with("12345")
     mock_history.get_result.assert_called_with("12345")
     assert "Job 12345 is still RUNNING. The result is not yet available." in response
+
+def test_run_job_action_renders_output_parser_file(run_job_action, tmp_path):
+    """
+    Tests that if the output_parser's 'file' field is a template,
+    it is correctly rendered before being sent to the JobHistory.
+    """
+    # 1. Setup
+    job_uuid = uuid.uuid4()
+    job_dir = tmp_path / str(job_uuid)
+    mock_job_workspace = JobWorkspace(
+        job_dir=job_dir, output_dir=job_dir / "output", slurm_dir=job_dir / "slurm", script_path=job_dir / "job_script.sh"
+    )
+    mock_template = MagicMock()
+    mock_template.render.return_value = "script content"
+
+    run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE_WITH_TEMPLATE_IN_PARSER)]}
+    run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
+    run_job_action.tool_executor.execute.return_value = "Submitted batch job 12345"
+
+    # 2. Act
+    with patch("jinja2.Environment.get_template", return_value=mock_template), \
+         patch("builtins.open", mock_open()):
+        run_job_action.run("prompt")
+
+    # 3. Assert
+    run_job_action.job_history.register_job.assert_called_once()
+    call_args, call_kwargs = run_job_action.job_history.register_job.call_args
+    parser_info = call_kwargs.get("output_parser_info")
+    
+    assert parser_info is not None
+    # Verify the 'file' field was rendered from '{{ output_file }}' to 'my_rng.txt'
+    assert parser_info['file'] == "output/my_rng.txt"
