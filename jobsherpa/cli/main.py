@@ -2,6 +2,7 @@ import typer
 import logging
 import yaml
 import os
+import getpass
 from typing import Optional
 # from jobsherpa.agent.agent import JobSherpaAgent # <-- This will be moved
 
@@ -14,10 +15,9 @@ def get_user_profile_path(profile_name: Optional[str], profile_path: Optional[st
     if profile_path:
         return profile_path
     
-    # Default to a standard location if no path is given
+    # Default to the current user's system username
     if not profile_name:
-        # In a real app, we might get the username from the environment
-        profile_name = "default_user"
+        profile_name = getpass.getuser()
         
     return os.path.join("knowledge_base", "user", f"{profile_name}.yaml")
 
