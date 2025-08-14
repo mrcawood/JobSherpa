@@ -17909,7 +17909,488 @@ yes lets proceed
 
 _**Assistant**_
 
+<think><details><summary>Thought Process</summary>
+**Creating Tests First**
 
+I've started by outlining the initial plan. The immediate task is to start with test-driven development. I need to create a test file and a failing test. This will be the foundation. From there, I will iterate.
+
+
+**Developing Test Cases**
+
+I've drafted the initial test case within `tests/test_cli.py`, focusing on the `jobsherpa config` command.  My test, `test_config_set_and_get`, utilizes `typer.testing.CliRunner` and a temporary profile file managed by `pytest` to avoid unintended changes. The test will set, and get the `workspace` configuration parameter. I'll be asserting command success and the expected values.
+
+
+**Designing the First Test**
+
+I'm now deep into the `test_config_set_and_get` test. I'm sketching out the structure, utilizing `typer.testing.CliRunner` within my `tests/test_cli.py` file. I'm using `pytest`'s `tmp_path` fixture to isolate the test's interaction with configuration files, guaranteeing that it sets and gets the `workspace` parameter using `--profile-path`. The first assertion will be that the set command succeeds, followed by the correct workspace being created and read. It's nearly complete, and I expect it will fail as designed.
+
+
+</details></think>
+
+---
+
+
+
+Excellent. I will now create the new test file, `tests/test_cli.py`, and write our first failing test for the `jobsherpa config` command.
+
+This test will use a temporary directory and a dummy user profile file to verify that we can `set` a configuration value and then `get` it back. This will fail because we haven't created the `config` command in our CLI yet.
+
+---
+
+<details><summary>Edit file: tests/test_cli.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 50, lines removed: 1
+
+```diff
+@@ -1,1 +1,50 @@
+- 
++ import pytest
++ from typer.testing import CliRunner
++ import yaml
++ import os
++ 
++ from jobsherpa.cli.main import app # We need to import the app object
++ 
++ runner = CliRunner()
++ 
++ def test_config_set_and_get(tmp_path):
++     """
++     Tests that we can set a configuration value and then get it back.
++     """
++     user_profile_dir = tmp_path / "user"
++     user_profile_dir.mkdir()
++     user_profile_file = user_profile_dir / "test_user.yaml"
++ 
++     # 1. Set a value
++     result_set = runner.invoke(
++         app,
++         [
++             "config",
++             "set",
++             "workspace",
++             "/path/to/my/workspace",
++             "--user-profile-path", # Use a direct path for testing
++             str(user_profile_file),
++         ],
++     )
++     assert result_set.exit_code == 0
++     assert "Updated configuration" in result_set.stdout
++ 
++     # Verify the file content
++     with open(user_profile_file, 'r') as f:
++         config = yaml.safe_load(f)
++     assert config["defaults"]["workspace"] == "/path/to/my/workspace"
++ 
++     # 2. Get the value back
++     result_get = runner.invoke(
++         app,
++         [
++             "config",
++             "get",
++             "workspace",
++             "--user-profile-path",
++             str(user_profile_file),
++         ],
++     )
++     assert result_get.exit_code == 0
++     assert "/path/to/my/workspace" in result_get.stdout
+```
+
+</details>
+
+---
+
+Our test expects to import `app` from `jobsherpa.cli.main`, but our current CLI file doesn't expose the `typer.Typer()` instance directly. I need to refactor `jobsherpa/cli/main.py` slightly to create a top-level `app` object that both our tests and the `typer.run` command can use.
+
+---
+
+<details><summary>Edit file: jobsherpa/cli/main.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 4, lines removed: 1
+
+```diff
+@@ -3,5 +3,8 @@
+  from jobsherpa.agent.agent import JobSherpaAgent
+  
+- def main(
++ app = typer.Typer()
++ 
++ @app.command()
++ def run(
+      prompt: str,
+      verbose: bool = typer.Option(
+```
+
+**Chunk 2**
+Lines added: 1, lines removed: 1
+
+```diff
+@@ -52,5 +55,5 @@
+  
+  def run_app():
+-     typer.run(main)
++     app()
+  
+  if __name__ == "__main__":
+```
+
+</details>
+
+---
+
+Now that the CLI is refactored, I need to update the entry point in our `pyproject.toml` to call the `run_app` function, which now correctly initializes the Typer app. This is a small but critical change to ensure the `jobsherpa` command still works.
+
+---
+
+Edit made no changes to the file
+
+---
+
+My apologies. It seems the entrypoint is already correct. I will now run `pytest` to confirm that our new test fails as expected.
+
+---
+
+```bash
+/Users/mcawood/dev/JobSherpa/.venv/bin/pytest
+```
+
+```
+
+========================================================== test session starts ==========================================================
+platform darwin -- Python 3.13.3, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/mcawood/dev/JobSherpa
+configfile: pyproject.toml
+plugins: anyio-4.10.0, typeguard-4.4.4
+collected 15 items                                                                                                                      
+
+tests/test_agent.py .........                                                                                                     [ 60%]
+tests/test_cli.py F                                                                                                               [ 66%]
+tests/test_job_state_tracker.py ....                                                                                              [ 93%]
+tests/test_tool_executor.py .                                                                                                     [100%]
+
+=============================================================== FAILURES ================================================================
+________________________________________________________ test_config_set_and_get ________________________________________________________
+
+tmp_path = PosixPath('/private/var/folders/r4/c2kvh3zs7230vndy5xy0rkg40000gp/T/pytest-of-mcawood/pytest-0/test_config_set_and_get0')
+
+    def test_config_set_and_get(tmp_path):
+        """
+        Tests that we can set a configuration value and then get it back.
+        """
+        user_profile_dir = tmp_path / "user"
+        user_profile_dir.mkdir()
+        user_profile_file = user_profile_dir / "test_user.yaml"
+    
+        # 1. Set a value
+        result_set = runner.invoke(
+            app,
+            [
+                "config",
+                "set",
+                "workspace",
+                "/path/to/my/workspace",
+                "--user-profile-path", # Use a direct path for testing
+                str(user_profile_file),
+            ],
+        )
+>       assert result_set.exit_code == 0
+E       assert 2 == 0
+E        +  where 2 = <Result SystemExit(2)>.exit_code
+
+tests/test_cli.py:30: AssertionError
+=========================================================== warnings summary ============================================================
+.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12
+  /Users/mcawood/dev/JobSherpa/.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12: UserWarning: pkg_resources is deprecated a
+s an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-1
+1-30. Refrain from using this package or pin to Setuptools<81.
+
+    import pkg_resources
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================================================== short test summary info ========================================================
+FAILED tests/test_cli.py::test_config_set_and_get - assert 2 == 0
+================================================ 1 failed, 14 passed, 1 warning in 4.82s ================================================
+```
+
+---
+
+Excellent. The test failed with `assert 2 == 0`. An exit code of `2` from Typer indicates that a command was not found. This is the perfect "Red" state for us.
+
+Now for the "Green" phase. I will implement the `config` command and its `get` and `set` subcommands in `jobsherpa/cli/main.py`. This will involve:
+1.  Creating a new Typer app for the `config` command.
+2.  Adding `get` and `set` functions decorated as commands under this new app.
+3.  Adding the `config` app as a subcommand to our main `app`.
+4.  Implementing the logic to read and write to the specified YAML user profile file.
+
+---
+
+<details><summary>Edit file: jobsherpa/cli/main.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 69, lines removed: undefined
+
+```diff
+@@ -1,7 +1,76 @@
+  import typer
+  import logging
++ import yaml
++ import os
++ from typing import Optional
+  from jobsherpa.agent.agent import JobSherpaAgent
+  
+  app = typer.Typer()
++ config_app = typer.Typer()
++ app.add_typer(config_app, name="config", help="Manage user configuration.")
++ 
++ def get_user_profile_path(profile_name: Optional[str], profile_path: Optional[str]) -> str:
++     """Determines the path to the user profile file."""
++     if profile_path:
++         return profile_path
++     
++     # Default to a standard location if no path is given
++     if not profile_name:
++         # In a real app, we might get the username from the environment
++         profile_name = "default_user"
++         
++     return os.path.join("knowledge_base", "user", f"{profile_name}.yaml")
++ 
++ @config_app.command("set")
++ def config_set(
++     key: str,
++     value: str,
++     user_profile: Optional[str] = typer.Option(None, "--user-profile", help="The name of the user profile to use."),
++     user_profile_path: Optional[str] = typer.Option(None, "--user-profile-path", help="Direct path to user profile file (for testing).")
++ ):
++     """Set a configuration key-value pair in the user profile."""
++     path = get_user_profile_path(user_profile, user_profile_path)
++     
++     # Ensure the directory exists
++     os.makedirs(os.path.dirname(path), exist_ok=True)
++     
++     config = {}
++     if os.path.exists(path):
++         with open(path, 'r') as f:
++             config = yaml.safe_load(f) or {}
++             
++     if "defaults" not in config:
++         config["defaults"] = {}
++         
++     config["defaults"][key] = value
++     
++     with open(path, 'w') as f:
++         yaml.dump(config, f)
++         
++     print(f"Updated configuration in {path}: set {key} = {value}")
++ 
++ @config_app.command("get")
++ def config_get(
++     key: str,
++     user_profile: Optional[str] = typer.Option(None, "--user-profile", help="The name of the user profile to use."),
++     user_profile_path: Optional[str] = typer.Option(None, "--user-profile-path", help="Direct path to user profile file (for testing).")
++ ):
++     """Get a configuration value from the user profile."""
++     path = get_user_profile_path(user_profile, user_profile_path)
++     
++     if not os.path.exists(path):
++         print(f"Error: User profile not found at {path}")
++         raise typer.Exit(1)
++         
++     with open(path, 'r') as f:
++         config = yaml.safe_load(f)
++         
++     value = config.get("defaults", {}).get(key)
++     
++     if value:
++         print(value)
++     else:
++         print(f"Error: Key '{key}' not found in user profile.")
++         raise typer.Exit(1)
+  
+  @app.command()
+```
+
+</details>
+
+---
+
+Now that the `config` command is implemented, I'll run `pytest` to confirm that our new test passes.
+
+---
+
+```bash
+/Users/mcawood/dev/JobSherpa/.venv/bin/pytest
+```
+
+```
+
+========================================================== test session starts ==========================================================
+platform darwin -- Python 3.13.3, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/mcawood/dev/JobSherpa
+configfile: pyproject.toml
+plugins: anyio-4.10.0, typeguard-4.4.4
+collected 15 items                                                                                                                      
+
+tests/test_agent.py .........                                                                                                     [ 60%]
+tests/test_cli.py .                                                                                                               [ 66%]
+tests/test_job_state_tracker.py ....                                                                                              [ 93%]
+tests/test_tool_executor.py .                                                                                                     [100%]
+
+=========================================================== warnings summary ============================================================
+.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12
+  /Users/mcawood/dev/JobSherpa/.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12: UserWarning: pkg_resources is deprecated a
+s an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-1
+1-30. Refrain from using this package or pin to Setuptools<81.
+
+    import pkg_resources
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+===================================================== 15 passed, 1 warning in 2.98s =====================================================
+```
+
+---
+
+Excellent! All tests passed. We have successfully implemented the `jobsherpa config` command, which provides the foundational mechanism for our persistent user profiles.
+
+This completes the first part of our current goal. I will now commit this new feature.
+
+---
+
+```bash
+git add . && git commit -m "feat: Add 'jobsherpa config' command for user profile management" -m "This commit introduces a new 'config' command to the CLI, allowing users to get and set key-value pairs in their personal configuration file." -m "- Adds 'config get <key>' and 'config set <key> <value>' subcommands." -m "- This provides the core mechanism for the agent's persistent user memory, a critical step toward a more interactive and scalable architecture."
+```
+
+```
+
+[main 4cddfdd] feat: Add 'jobsherpa config' command for user profile management
+ 4 files changed, 888 insertions(+), 2 deletions(-)
+ create mode 100644 tests/test_cli.py
+```
+
+---
+
+Now that we have a way to manage our configuration, we can proceed to the second part of our goal: **Scoped Workspace Implementation**.
+
+The plan is to refactor the agent to use a `workspace` value from the user's profile to control all of its file operations. This will involve:
+1.  Removing the `--workspace` flag from the CLI (it's now managed by `config`).
+2.  Updating the agent to read the `workspace` from the user config.
+3.  Modifying the `ToolExecutor` to run commands *inside* the workspace directory.
+4.  Changing the agent's templating logic to save the rendered script to a file inside the workspace before execution, rather than piping it via stdin.
+
+This is a significant refactoring that will touch several parts of our application. I'll start by writing a new failing test that asserts this new behavior. Shall I proceed?
+
+---
+
+_**User**_
+
+yes lets proceed, we need to be careful about how we write tests for filesystem interactions. the tests need to be clean and robust and not pollute our directories
+
+---
+
+_**Assistant**_
+
+
+
+---
+
+
+
+---
+
+<details><summary>Edit file: tests/test_agent.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -3,4 +3,5 @@
+  from freezegun import freeze_time
+  from unittest.mock import MagicMock, patch, mock_open
++ import yaml
+  
+  def test_run_hello_world_dry_run():
+```
+
+**Chunk 2**
+Lines added: 54, lines removed: undefined
+
+```diff
+@@ -284,3 +285,57 @@
+              assert "allocation" in response
+              mock_subprocess.assert_not_called()
++ 
++ def test_agent_operates_within_scoped_workspace(tmp_path):
++     """
++     Tests that the agent correctly uses the workspace defined in the
++     user profile to write its script and execute from that directory.
++     """
++     # 1. Set up the environment
++     workspace_path = tmp_path / "my_test_workspace"
++     workspace_path.mkdir()
++     
++     user_profile_file = tmp_path / "test_user.yaml"
++     user_profile = {"defaults": {"workspace": str(workspace_path)}}
++     with open(user_profile_file, 'w') as f:
++         yaml.dump(user_profile, f)
++ 
++     # 2. Initialize the agent
++     agent = JobSherpaAgent(
++         dry_run=False,
++         system_profile="vista",
++         # We need to load the user config directly for the agent in a test
++         # because the CLI config command is separate.
++         user_config=user_profile 
++     )
++     
++     # 3. Mock the RAG pipeline and subprocess
++     with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
++         mock_document = MagicMock()
++         mock_document.meta = {
++             "name": "random_number_generator",
++             "template": "random_number.sh.j2",
++             "template_args": {"job_name": "test-rng-job", "output_file": "rng.txt"},
++             "tool": "submit"
++         }
++         mock_pipeline_run.return_value = {"documents": [mock_document]}
++         
++         with patch("subprocess.run") as mock_subprocess:
++             mock_subprocess.return_value = MagicMock(stdout="Submitted batch job mock_123")
++             agent.run("Generate a random number")
++ 
++             # 4. Assert the workspace behavior
++             
++             # Assert that a script was written inside the workspace
++             scripts_dir = workspace_path / ".jobsherpa" / "scripts"
++             assert scripts_dir.is_dir()
++             written_scripts = list(scripts_dir.glob("*.sh"))
++             assert len(written_scripts) == 1
++             
++             # Assert that the executor was called with the path to that script
++             executed_command = mock_subprocess.call_args.args[0]
++             assert executed_command[0] == "sbatch"
++             assert executed_command[1] == str(written_scripts[0])
++             
++             # Assert that the command was executed from within the workspace
++             assert mock_subprocess.call_args.kwargs["cwd"] == str(workspace_path)
+  
+```
+
+</details>
+
+---
+
+I made a mistake in the test. I'm passing `user_config` as a direct argument to the agent's constructor, but the constructor doesn't accept that. It expects to load the config itself based on a profile name.
+
+To fix the test, I will adjust the agent's `__init__` method to allow a `user_config` dictionary to be passed in directly. This is a common and useful pattern for testing, as it allows us to inject a configuration into the agent without needing to create temporary files on disk. I'll give it a default of `None`, so it doesn't affect the normal application flow.
 
 ---
 

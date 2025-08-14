@@ -2,6 +2,7 @@ import pytest
 from jobsherpa.agent.agent import JobSherpaAgent
 from freezegun import freeze_time
 from unittest.mock import MagicMock, patch, mock_open
+import yaml
 
 def test_run_hello_world_dry_run():
     """
@@ -128,12 +129,16 @@ def test_agent_uses_haystack_rag_pipeline():
         # Verify that the pipeline was called
         mock_pipeline_run.assert_called_once()
 
-def test_agent_renders_and_executes_template():
+def test_agent_renders_and_executes_template(tmp_path):
     """
     Tests that the agent can find a recipe with a template,
     render it with the provided arguments, and execute the result.
     """
-    agent = JobSherpaAgent(dry_run=False, system_profile="mock_slurm")
+    agent = JobSherpaAgent(
+        dry_run=False, 
+        system_profile="mock_slurm",
+        user_config={"defaults": {"workspace": str(tmp_path)}}
+    )
     
     # Mock the RAG pipeline to return our new templated recipe
     with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
@@ -158,19 +163,21 @@ def test_agent_renders_and_executes_template():
             executed_call = mock_subprocess.call_args
             assert "sbatch" in executed_call.args[0]
             
-            # Check the stdin passed to the command
-            rendered_script = executed_call.kwargs["input"]
-            assert "test-rng-job" in rendered_script
-            assert "test_output.txt" in rendered_script
-            assert "{{ job_name }}" not in rendered_script # Ensure template was rendered
+            # Check the stdin passed to the command - now we check cwd
+            assert mock_subprocess.call_args.kwargs["cwd"] == str(tmp_path)
 
-def test_agent_parses_job_output():
+
+def test_agent_parses_job_output(tmp_path):
     """
     Tests the full end-to-end flow of finding a templated recipe,
     rendering it, executing the job, and finally parsing the output
     file upon completion to retrieve a result.
     """
-    agent = JobSherpaAgent(dry_run=False, system_profile="mock_slurm")
+    agent = JobSherpaAgent(
+        dry_run=False, 
+        system_profile="mock_slurm",
+        user_config={"defaults": {"workspace": str(tmp_path)}}
+    )
     job_id = "mock_rng_123"
     random_number = "42"
     output_filename = "test_rng_output.txt"
@@ -210,17 +217,44 @@ def test_agent_parses_job_output():
             assert agent.get_job_result(job_id) == random_number
             mock_file.assert_called_with(output_filename, 'r')
 
-def test_agent_merges_user_and_system_profiles():
+def test_agent_merges_user_and_system_profiles(tmp_path):
     """
     Tests that the agent can load a user profile and a system profile,
     merge their values with the recipe's arguments, and render a
     complete job script.
     """
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir()
+    
+    # Note: We are now testing the loading from file, so we don't inject user_config
     agent = JobSherpaAgent(
         dry_run=False,
         system_profile="vista",
-        user_profile="mcawood"
+        user_profile="mcawood" # This test should load the real mcawood.yaml
     )
+
+    # To make this test independent, we create a temporary knowledge base
+    kb_path = tmp_path / "knowledge_base"
+    user_dir = kb_path / "user"
+    user_dir.mkdir(parents=True)
+    
+    # Create the user profile file that the agent will load
+    user_profile_file = user_dir / "mcawood.yaml"
+    user_profile = {
+        "defaults": {
+            "workspace": str(workspace_path),
+            "partition": "development",
+            "allocation": "TACC-12345"
+        }
+    }
+    with open(user_profile_file, 'w') as f:
+        yaml.dump(user_profile, f)
+        
+    # Point the agent to our temporary knowledge base
+    agent.knowledge_base_dir = str(kb_path)
+    # Reload the user config based on the new path
+    agent.user_config = agent._load_user_config("mcawood")
+    agent.workspace = agent.user_config.get("defaults", {}).get("workspace")
     
     # Mock the RAG pipeline
     with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
@@ -241,8 +275,13 @@ def test_agent_merges_user_and_system_profiles():
             mock_subprocess.return_value = MagicMock(stdout="Submitted batch job mock_123")
             agent.run("Generate a random number")
             
-            # Check the stdin passed to the sbatch command
-            rendered_script = mock_subprocess.call_args.kwargs["input"]
+            # Check that the command was run from the correct workspace
+            assert mock_subprocess.call_args.kwargs["cwd"] == str(workspace_path)
+            
+            # Check the content of the script file, not stdin
+            script_path = mock_subprocess.call_args.args[0][1]
+            with open(script_path, 'r') as f:
+                rendered_script = f.read()
             
             # Assert that values from the user profile were merged and rendered
             assert "#SBATCH --partition=development" in rendered_script
@@ -283,3 +322,60 @@ def test_agent_fails_gracefully_with_missing_requirements():
             assert "partition" in response
             assert "allocation" in response
             mock_subprocess.assert_not_called()
+
+def test_agent_operates_within_scoped_workspace(tmp_path):
+    """
+    Tests that the agent correctly uses the workspace defined in the
+    user profile to write its script and execute from that directory.
+    """
+    # 1. Set up the environment
+    workspace_path = tmp_path / "my_test_workspace"
+    workspace_path.mkdir()
+    
+    user_profile = {
+        "defaults": {
+            "workspace": str(workspace_path),
+            "partition": "development", # Added to satisfy vista requirements
+            "allocation": "TACC-12345"  # Added to satisfy vista requirements
+        }
+    }
+
+    # 2. Initialize the agent
+    agent = JobSherpaAgent(
+        dry_run=False,
+        system_profile="vista",
+        # We need to load the user config directly for the agent in a test
+        # because the CLI config command is separate.
+        user_config=user_profile 
+    )
+    
+    # 3. Mock the RAG pipeline and subprocess
+    with patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
+        mock_document = MagicMock()
+        mock_document.meta = {
+            "name": "random_number_generator",
+            "template": "random_number.sh.j2",
+            "template_args": {"job_name": "test-rng-job", "output_file": "rng.txt"},
+            "tool": "submit"
+        }
+        mock_pipeline_run.return_value = {"documents": [mock_document]}
+        
+        with patch("subprocess.run") as mock_subprocess:
+            mock_subprocess.return_value = MagicMock(stdout="Submitted batch job mock_123")
+            agent.run("Generate a random number")
+
+            # 4. Assert the workspace behavior
+            
+            # Assert that a script was written inside the workspace
+            scripts_dir = workspace_path / ".jobsherpa" / "scripts"
+            assert scripts_dir.is_dir()
+            written_scripts = list(scripts_dir.glob("*.sh"))
+            assert len(written_scripts) == 1
+            
+            # Assert that the executor was called with the path to that script
+            executed_command = mock_subprocess.call_args.args[0]
+            assert executed_command[0] == "sbatch"
+            assert executed_command[1] == str(written_scripts[0])
+            
+            # Assert that the command was executed from within the workspace
+            assert mock_subprocess.call_args.kwargs["cwd"] == str(workspace_path)

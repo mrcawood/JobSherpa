@@ -13,12 +13,11 @@ class ToolExecutor:
         self.dry_run = dry_run
         self.tool_dir = tool_dir
 
-    def execute(self, tool_name: str, args: list[str], script_content: Optional[str] = None) -> str:
+    def execute(self, tool_name: str, args: list[str], workspace: Optional[str] = None) -> str:
         """
-        Executes a given tool with arguments.
+        Executes a given tool with arguments from within the specified workspace.
         It first checks for a local tool in the tool_dir, otherwise
         assumes it's a system command.
-        If script_content is provided, it is passed as stdin to the command.
         """
         local_tool_path = os.path.join(self.tool_dir, tool_name)
         
@@ -27,14 +26,10 @@ class ToolExecutor:
         else:
             command = [tool_name] + args
 
-        logger.debug("Executing command: %s", " ".join(command))
-        if script_content:
-            logger.debug("Passing stdin to command:\n%s", script_content)
+        logger.debug("Executing command: %s in workspace: %s", " ".join(command), workspace)
 
         if self.dry_run:
-            if script_content:
-                return f"DRY-RUN: Would execute: {' '.join(command)} with stdin:\n{script_content}"
-            return f"DRY-RUN: Would execute: {' '.join(command)}"
+            return f"DRY-RUN: Would execute: {' '.join(command)} in workspace: {workspace}"
         
         try:
             result = subprocess.run(
@@ -42,7 +37,7 @@ class ToolExecutor:
                 capture_output=True, 
                 text=True, 
                 check=True,
-                input=script_content
+                cwd=workspace
             )
             logger.debug("Command successful. stdout: %s", result.stdout)
             return result.stdout

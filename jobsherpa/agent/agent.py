@@ -3,6 +3,7 @@ import os
 import re
 import jinja2
 import logging
+import uuid
 from typing import Optional
 from jobsherpa.agent.tool_executor import ToolExecutor
 from jobsherpa.agent.job_state_tracker import JobStateTracker
@@ -23,7 +24,8 @@ class JobSherpaAgent:
         dry_run: bool = False, 
         knowledge_base_dir: str = "knowledge_base",
         system_profile: Optional[str] = None,
-        user_profile: Optional[str] = None
+        user_profile: Optional[str] = None,
+        user_config: Optional[dict] = None # For testing
     ):
         """
         Initializes the agent.
@@ -32,7 +34,8 @@ class JobSherpaAgent:
         self.tool_executor = ToolExecutor(dry_run=self.dry_run)
         self.knowledge_base_dir = knowledge_base_dir
         self.system_config = self._load_system_config(system_profile)
-        self.user_config = self._load_user_config(user_profile)
+        self.user_config = user_config or self._load_user_config(user_profile)
+        self.workspace = self.user_config.get("defaults", {}).get("workspace") if self.user_config else None
         self.tracker = JobStateTracker()
         self.rag_pipeline = self._initialize_rag_pipeline()
         logger.info("JobSherpaAgent initialized.")
@@ -177,6 +180,12 @@ class JobSherpaAgent:
                     return error_msg, None
 
             logger.info("Rendering script from template: %s", template_name)
+            
+            # Ensure workspace is defined for templated jobs
+            if not self.workspace:
+                error_msg = "Workspace must be defined in user profile for templated jobs."
+                logger.error(error_msg)
+                return error_msg, None
 
             # Create a Jinja2 environment
             template_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'tools')
@@ -186,14 +195,23 @@ class JobSherpaAgent:
                 template = env.get_template(template_name)
                 rendered_script = template.render(context)
                 logger.debug("Rendered script content:\n%s", rendered_script)
-                
-                # The "tool" in a templated recipe is the command to pipe the script to
+
+                # Write the rendered script to a file in the workspace
+                scripts_dir = os.path.join(self.workspace, ".jobsherpa", "scripts")
+                os.makedirs(scripts_dir, exist_ok=True)
+                script_filename = f"job-{uuid.uuid4()}.sh"
+                script_path = os.path.join(scripts_dir, script_filename)
+                with open(script_path, 'w') as f:
+                    f.write(rendered_script)
+                logger.info("Wrote rendered script to: %s", script_path)
+
+                # The "tool" in a templated recipe is the command to execute the script
                 submit_command = recipe["tool"]
                 if self.system_config and submit_command in self.system_config.get("commands", {}):
                     submit_command = self.system_config["commands"][submit_command]
 
-                # The ToolExecutor will receive the submit command and the script content
-                execution_result = self.tool_executor.execute(submit_command, [], script_content=rendered_script)
+                # The ToolExecutor will now receive the script path as an argument
+                execution_result = self.tool_executor.execute(submit_command, [script_path], workspace=self.workspace)
 
             except jinja2.TemplateNotFound:
                 logger.error("Template '%s' not found in tools directory.", template_name)
@@ -209,7 +227,7 @@ class JobSherpaAgent:
             
             args = recipe.get('args', [])
             logger.debug("Executing non-templated tool: %s with args: %s", tool_name, args)
-            execution_result = self.tool_executor.execute(tool_name, args)
+            execution_result = self.tool_executor.execute(tool_name, args, workspace=self.workspace)
 
         job_id = self._parse_job_id(execution_result)
         if job_id:

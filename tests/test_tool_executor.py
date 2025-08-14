@@ -13,7 +13,7 @@ def test_tool_executor_runs_system_command():
     mock_process.stdout = "hello"
 
     with patch("subprocess.run", return_value=mock_process) as mock_subprocess:
-        result = executor.execute("echo", ["hello"])
+        result = executor.execute("echo", ["hello"], workspace="/tmp")
 
         # Verify that subprocess.run was called with the system command
         mock_subprocess.assert_called_with(
@@ -21,7 +21,7 @@ def test_tool_executor_runs_system_command():
             capture_output=True,
             text=True,
             check=True,
-            input=None
+            cwd="/tmp"
         )
         
         # Verify the result is the stdout from the command
