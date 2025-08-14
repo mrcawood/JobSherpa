@@ -308,9 +308,15 @@ class QueryHistoryAction:
         logger.debug("Latest job id for result lookup: %s", latest_job_id)
         if not latest_job_id:
             return "I can't find any jobs in your history."
-            
+        
+        # Actively refresh status and attempt parsing if job is terminal
+        current_status = self.job_history.check_job_status(latest_job_id)
+        logger.debug("Refreshed status for %s: %s", latest_job_id, current_status)
         result = self.job_history.get_result(latest_job_id)
-        logger.info("Latest job %s stored result: %s", latest_job_id, result)
+        if result is None:
+            logger.debug("Result missing after status refresh; trying direct parse from output file")
+            result = self.job_history.try_parse_result(latest_job_id)
+        logger.info("Latest job %s result after refresh/parse: %s", latest_job_id, result)
         return f"The result of job {latest_job_id} is: {result or 'Not available'}."
 
     def _get_job_by_id_summary(self, job_id: str) -> str:
@@ -333,6 +339,9 @@ class QueryHistoryAction:
             return f"Sorry, I couldn't find any information for job ID {job_id}."
             
         status = self.job_history.check_job_status(job_id)
-        result = job_info.get('result', 'Not available')
+        result = job_info.get('result')
+        if result is None:
+            logger.debug("Result missing for job %s; trying direct parse from output file", job_id)
+            result = self.job_history.try_parse_result(job_id) or 'Not available'
         logger.info("Job %s summary: status=%s, result=%s", job_id, status, result)
         return f"Job {job_id} status is {status}. Result: {result}"

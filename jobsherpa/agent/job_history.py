@@ -89,6 +89,13 @@ class JobHistory:
         """Gets the parsed result of a completed job."""
         return self._jobs[job_id].get("result") if job_id in self._jobs else None
 
+    def check_job_status(self, job_id: str) -> Optional[str]:
+        """Public helper to actively refresh and return the current status for a job."""
+        if job_id not in self._jobs:
+            return None
+        self.check_and_update_statuses(specific_job_id=job_id)
+        return self._jobs.get(job_id, {}).get("status")
+
     def get_job_by_id(self, job_id: str) -> Optional[dict]:
         """Returns all information for a specific job ID."""
         return self._jobs.get(job_id)
@@ -131,13 +138,13 @@ class JobHistory:
         regex_pattern = parser_info.get("parser_regex")
 
         if not all([relative_output_file, job_directory, regex_pattern]):
-            logger.warning("Job %s is missing information required for output parsing.", job_id)
+            logger.warning("Job %s missing parsing info. file=%s dir=%s regex=%s", job_id, relative_output_file, job_directory, bool(regex_pattern))
             return
 
         # The output file path is now relative to the job's unique directory
         output_file_path = os.path.join(job_directory, relative_output_file)
         
-        logger.info("Parsing output file '%s' for job %s", output_file_path, job_id)
+        logger.info("Parsing output file for job %s: %s", job_id, output_file_path)
         try:
             with open(output_file_path, 'r') as f:
                 content = f.read()
@@ -149,11 +156,11 @@ class JobHistory:
                 logger.info("Parsed result for job %s: %s", job_id, result)
                 self._save_state() # Save state after successful parsing
             else:
-                logger.warning("Regex did not find a match in output file for job %s", job_id)
+                logger.warning("No match in output file for job %s using regex: %s", job_id, regex_pattern)
         except FileNotFoundError:
-            logger.warning("Could not find output file %s to parse for job %s.", output_file_path, job_id)
+            logger.warning("Output file not found for job %s: %s", job_id, output_file_path)
         except Exception as e:
-            logger.warning("Error parsing file %s for job %s: %s", output_file_path, job_id, e, exc_info=True)
+            logger.warning("Error parsing result for job %s from %s: %s", job_id, output_file_path, e, exc_info=True)
 
     def _parse_squeue_status(self, job_ids: list[str]) -> dict:
         """Parses the status from squeue output."""
@@ -249,6 +256,7 @@ class JobHistory:
         if not jobs_to_check:
             return
 
+        logger.debug("Checking statuses for jobs: %s", jobs_to_check)
         # Check squeue first for active jobs
         squeue_statuses = self._parse_squeue_status(jobs_to_check)
         
@@ -261,6 +269,20 @@ class JobHistory:
         
         # For jobs no longer in squeue, check sacct for final status
         if jobs_not_in_squeue:
+            logger.debug("Jobs not in squeue; checking sacct: %s", jobs_not_in_squeue)
             sacct_statuses = self._parse_sacct_status(jobs_not_in_squeue)
+            if not sacct_statuses:
+                logger.warning("sacct returned no statuses for jobs: %s", jobs_not_in_squeue)
             for job_id, status in sacct_statuses.items():
                 self.set_status(job_id, status)
+
+    def try_parse_result(self, job_id: str) -> Optional[str]:
+        """
+        Attempt to parse the job's result from its output file regardless of status.
+        Useful when scheduler status is delayed but output exists.
+        """
+        if job_id not in self._jobs:
+            return None
+        logger.debug("Attempting direct parse of result for job %s", job_id)
+        self._parse_job_output(job_id)
+        return self._jobs.get(job_id, {}).get("result")
