@@ -14,7 +14,7 @@ def test_register_and_get_status(job_history):
     Tests that a job can be registered and its initial status is 'PENDING'.
     """
     job_id = "mock_12345"
-    job_history.register_job(job_id, "/tmp/mock_dir")
+    job_history.register_job("mock_12345", job_name="test_job", job_directory="/tmp/mock_dir")
     # In the new model, get_status will try to check, so we need to mock subprocess
     with patch("subprocess.run", return_value=MagicMock(stdout="")):
         assert job_history.get_status(job_id) == "PENDING"
@@ -24,8 +24,8 @@ def test_set_status(job_history):
     Tests that a job's status can be manually set.
     """
     job_id = "mock_12345"
-    job_history.register_job(job_id, "/tmp/mock_dir")
-    job_history.set_status(job_id, "RUNNING")
+    job_history.register_job("mock_12345", job_name="test_job", job_directory="/tmp/mock_dir")
+    job_history.set_status("mock_12345", "RUNNING")
     with patch("subprocess.run", return_value=MagicMock(stdout="")):
         assert job_history.get_status(job_id) == "RUNNING"
 
@@ -39,7 +39,7 @@ def test_history_persists_to_file(tmp_path):
     
     # 1. Create the first instance, register a job, and it should save.
     history1 = JobHistory(history_file_path=str(history_file))
-    history1.register_job(job_id, "/tmp/mock_dir")
+    history1.register_job("mock_123", job_name="test_job", job_directory="/tmp/mock_dir")
     assert history_file.is_file()
     
     # 2. Create a second instance pointing to the same file.
@@ -55,7 +55,7 @@ def test_get_status_actively_checks_squeue(job_history):
     to squeue and updates the status if the job is found running.
     """
     job_id = "12345"
-    job_history.register_job(job_id, "/tmp/mock_dir")
+    job_history.register_job(job_id, job_name="test_job", job_directory="/tmp/mock_dir")
 
     # Mock squeue showing the job is now running
     mock_squeue_output = MagicMock(stdout=f"{job_id},RUNNING", stderr="")
@@ -74,7 +74,7 @@ def test_get_status_actively_checks_sacct(job_history):
     COMPLETED status in sacct.
     """
     job_id = "12345"
-    job_history.register_job(job_id, "/tmp/mock_dir")
+    job_history.register_job(job_id, job_name="test_job", job_directory="/tmp/mock_dir")
     job_history.set_status(job_id, "RUNNING")
 
     # Mock squeue returning empty, then sacct returning COMPLETED
@@ -95,7 +95,7 @@ def test_get_status_for_completed_job_does_not_recheck(job_history):
     (e.g., COMPLETED) does not trigger a system call.
     """
     job_id = "12345"
-    job_history.register_job(job_id, "/tmp/mock_dir")
+    job_history.register_job(job_id, job_name="test_job", job_directory="/tmp/mock_dir")
     job_history.set_status(job_id, "COMPLETED")
     
     with patch("subprocess.run") as mock_subprocess:
@@ -122,7 +122,7 @@ def test_history_parses_output_on_completion(job_history, tmp_path):
         "file": "output/results.txt",
         "parser_regex": r"value is: (\d+)"
     }
-    job_history.register_job(job_id, str(job_dir), output_parser_info=output_parser_info)
+    job_history.register_job(job_id, job_name="test_job", job_directory=str(job_dir), output_parser_info=output_parser_info)
     
     # Act: Manually set status to completed to trigger parsing
     job_history.set_status(job_id, "COMPLETED")
@@ -141,7 +141,7 @@ def test_history_handles_corrupted_file_gracefully(tmp_path):
     history = JobHistory(history_file_path=str(history_file))
 
     assert history.get_all_jobs() == {}
-    history.register_job("123", "/tmp/dir")
+    history.register_job("123", job_name="test_job", job_directory="/tmp/dir")
     assert "123" in history.get_all_jobs()
 
 def test_parse_job_output_handles_missing_file(job_history, tmp_path):
@@ -158,7 +158,7 @@ def test_parse_job_output_handles_missing_file(job_history, tmp_path):
         "parser_regex": "Value: (\\d+)"
     }
     
-    job_history.register_job(job_id, str(job_dir), output_parser_info=output_parser_info)
+    job_history.register_job(job_id, job_name="test_job", job_directory=str(job_dir), output_parser_info=output_parser_info)
     
     # The output file output/results.txt is *not* created.
     job_history.set_status(job_id, "COMPLETED")

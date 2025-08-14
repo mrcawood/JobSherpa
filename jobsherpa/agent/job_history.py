@@ -37,19 +37,21 @@ class JobHistory:
             except IOError as e:
                 logger.error("Failed to save job history file: %s", e)
 
-    def register_job(self, job_id: str, job_directory: str, output_parser_info: Optional[dict] = None):
+    def register_job(self, job_id: str, job_name: str, job_directory: str, output_parser_info: Optional[dict] = None):
         """
         Registers a new job with a default 'PENDING' status.
         """
         if job_id not in self._jobs:
             self._jobs[job_id] = {
+                "job_id": job_id, # Also store the ID inside the object
+                "job_name": job_name,
                 "status": "PENDING",
                 "start_time": time.time(),
                 "job_directory": job_directory,
                 "output_parser": output_parser_info,
                 "result": None
             }
-            logger.info("Registered new job: %s in directory: %s", job_id, job_directory)
+            logger.info("Registered new job: %s (%s) in directory: %s", job_id, job_name, job_directory)
             self._save_state()
 
     def get_status(self, job_id: str) -> Optional[str]:

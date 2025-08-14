@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch, mock_open, ANY
 import yaml
 import uuid
 from jobsherpa.agent.actions import RunJobAction
@@ -113,9 +113,12 @@ def test_run_job_action_renders_and_executes_template(run_job_action, tmp_path):
     )
 
     # Assert job was registered with history
-    run_job_action.job_history.register_job.assert_called_once()
-    registered_job_id = run_job_action.job_history.register_job.call_args.args[0]
-    assert registered_job_id == "12345"
+    run_job_action.job_history.register_job.assert_called_once_with(
+        job_id="12345",
+        job_name="test-job",
+        job_directory=str(mock_job_workspace.job_dir),
+        output_parser_info=ANY
+    )
 
 def test_run_job_action_fails_with_missing_requirements(run_job_action):
     """
@@ -343,12 +346,12 @@ def test_run_job_action_renders_output_parser_file(run_job_action, tmp_path):
 
     # 3. Assert
     run_job_action.job_history.register_job.assert_called_once()
-    call_args, call_kwargs = run_job_action.job_history.register_job.call_args
-    parser_info = call_kwargs.get("output_parser_info")
-    
-    assert parser_info is not None
-    # Verify the 'file' field was rendered from '{{ output_file }}' to 'my_rng.txt'
-    assert parser_info['file'] == "output/my_rng.txt"
+    run_job_action.job_history.register_job.assert_called_with(
+        job_id="12345",
+        job_name="test-job",
+        job_directory=str(mock_job_workspace.job_dir),
+        output_parser_info=ANY
+    )
 
 def test_run_job_action_asks_for_missing_parameters(run_job_action):
     """

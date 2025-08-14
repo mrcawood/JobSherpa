@@ -166,7 +166,11 @@ def run(
                 current_prompt = input("> ")
             
     except Exception as e:
-        typer.secho(f"An unexpected error occurred: {e}", fg=typer.colors.RED)
+        if debug:
+            import traceback
+            traceback.print_exc()
+        else:
+            typer.secho(f"An unexpected error occurred: {e}", fg=typer.colors.RED)
         raise typer.Exit(code=1)
 
 def run_app():

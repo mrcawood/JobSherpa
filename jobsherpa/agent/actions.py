@@ -72,6 +72,9 @@ class RunJobAction:
             return "Sorry, I don't know how to handle that.", None, False, None
         
         logger.debug("Found matching recipe: %s", recipe["name"])
+        
+        job_name = recipe.get("template_args", {}).get("job_name", "jobsherpa-job")
+        job_workspace = None
 
         if "template" in recipe:
             # Build the template rendering context, starting with the conversation context
@@ -173,7 +176,10 @@ class RunJobAction:
 
         slurm_job_id = self._parse_job_id(execution_result)
         if slurm_job_id:
-            job_dir_to_register = str(job_workspace.job_dir) if 'job_workspace' in locals() else self.workspace_manager.base_path
+            if job_workspace:
+                job_dir_to_register = str(job_workspace.job_dir)
+            else:
+                job_dir_to_register = self.workspace_manager.base_path
             # Pass the parser info and job directory to the tracker
             output_parser = recipe.get("output_parser")
 
@@ -187,7 +193,12 @@ class RunJobAction:
                 except jinja2.TemplateError as e:
                     logger.error("Error rendering output_parser file template: %s", e)
             
-            self.job_history.register_job(slurm_job_id, job_dir_to_register, output_parser_info=output_parser)
+            self.job_history.register_job(
+                job_id=slurm_job_id,
+                job_name=job_name,
+                job_directory=job_dir_to_register,
+                output_parser_info=output_parser
+            )
             logger.info("Job %s submitted successfully.", slurm_job_id)
             response = f"Found recipe '{recipe['name']}'.\nJob submitted successfully with ID: {slurm_job_id}"
             return response, slurm_job_id, False, None
