@@ -2,32 +2,29 @@
 
 This document outlines the current development goal, the roadmap to achieve it, and a transparent log of known technical debt and placeholder implementations.
 
-## Previous Goal: End-to-End "Random Number" Generation (COMPLETED)
+## Previous Goal: Implement Persistent User Configuration and Scoped Workspace (COMPLETED)
 
-The previous objective was to implement a full, end-to-end workflow for a dynamic job. This has been successfully completed and validated on a real HPC system. The agent can now use a RAG pipeline, generate a script from a template with user- and system-specific parameters, submit it, monitor it, and parse the final output.
+The agent now has a robust system for managing user-specific settings and operating within a defined workspace. This was achieved by creating a `jobsherpa config` command for persistent user profiles (`knowledge_base/user/<username>.yaml`) and refactoring the agent to use the `workspace` setting from that profile for all file operations. This makes the agent's behavior explicit and provides a scalable foundation for future multi-user support.
 
 ---
 
-## Current Goal: Implement Persistent User Configuration and Scoped Workspace
+## Current Goal: Implement Asynchronous Job Handling
 
-Based on recent real-world testing, we've identified the need for a more robust way to manage user preferences and the agent's file-based operations. This goal evolves the previous "Scoped Workspace" idea into a more comprehensive solution that prepares the agent for a multi-user future.
+The agent's current `run` command is synchronous; it blocks the user's terminal from the moment a prompt is entered until the job is submitted. For a real HPC job that might queue for hours, this is not a viable user experience. This goal is to refactor the agent's core logic to handle job submission and monitoring in the background, immediately returning control to the user.
 
-**The Vision:** The agent's context (e.g., user identity, workspace location) should always be explicit. This is achieved by making the user's profile a persistent, "living" configuration file that the agent can read and, in the future, modify based on conversational commands. This architecture is designed to scale seamlessly from a single-user CLI tool to a multi-user web service, where a single agent daemon will serve requests from many users by loading their respective profiles.
+**The Vision:** The user should be able to submit a job and immediately get their prompt back, along with a job ID. They can then use other commands (e.g., `jobsherpa status <job_id>`, `jobsherpa results <job_id>`) to check on the job's progress or retrieve its results later. This transforms the agent from a simple one-shot tool into an interactive job manager.
 
 **Definition of Done:**
 
-1.  **Persistent User Configuration:**
-    -   A new `jobsherpa config` command is added to the CLI.
-    -   This command supports `get <key>` and `set <key> <value>` subcommands to read and write to the user's profile YAML file (e.g., `knowledge_base/user/mcawood.yaml`).
-    -   This provides the foundational mechanism for a persistent, modifiable user memory.
-
-2.  **Scoped Workspace Implementation:**
-    -   The agent is refactored to always load the user profile specified by the `--user-profile` flag.
-    -   The agent looks for a `workspace` key within the loaded user profile to determine the directory for all operations.
-    -   All commands executed by the `ToolExecutor` are run from within the workspace directory.
-    -   The agent writes all generated artifacts (rendered job scripts, output files) to predictable locations inside the workspace (e.g., `.jobsherpa/scripts/`, `outputs/`).
-    -   The `--workspace` CLI flag is removed in favor of the persistent configuration managed by `jobsherpa config`.
-    -   All relevant tests are updated to use and verify this new configuration-driven workspace logic.
+1.  **Immediate User Feedback:**
+    -   The `jobsherpa run` command returns a job ID and exits immediately after successful submission.
+    -   The `JobStateTracker` continues to run in a separate, persistent background process or thread.
+2.  **New CLI Commands:**
+    -   A new `jobsherpa status <job_id>` command is implemented to query the `JobStateTracker` for the current status of a specific job.
+    -   A new `jobsherpa results <job_id>` command is implemented to retrieve the final, parsed output of a completed job.
+3.  **Robust Background Process:**
+    -   The background monitoring process is robust and can be started/stopped reliably.
+    -   The mechanism for communication between the CLI and the background process (e.g., via file-based state, sockets) is clearly defined and tested.
 
 ---
 
@@ -43,22 +40,15 @@ Based on recent real-world testing, we've identified the need for a more robust 
 
 This section serves as a transparent record of design decisions made for short-term velocity. These items must be addressed before the project is considered mature.
 
-1.  **Implicit Workspace & File Paths:**
-    -   **Current State:** The agent generates and reads files (like `rng_output.txt`) in the current working directory. The location of the generated script is in memory and piped via stdin. This is not robust and makes tracking job artifacts difficult.
-    -   **Long-Term Plan:** This will be addressed by the "Implement a Scoped Workspace" goal.
-
-2.  **Synchronous Agent Flow:**
+1.  **Synchronous Agent Flow:**
     -   **Current State:** The agent's `run` method blocks until execution is complete.
-    -   **Long-Term Plan:** Refactor the agent's execution flow to be fully asynchronous, allowing it to manage multiple jobs and conversations concurrently.
-
-3.  **No Real LLM Integration:**
+    -   **Long-Term Plan:** This will be addressed by the "Implement Asynchronous Job Handling" goal.
+2.  **No Real LLM Integration:**
     -   **Current State:** The "planning" logic is a simple mapping from a retrieved recipe to a tool.
     -   **Long-Term Plan:** Integrate a real Large Language Model (LLM) to enable more complex reasoning, planning, and conversational capabilities.
-
-4.  **Simplistic Error Handling:**
+3.  **Simplistic Error Handling:**
     -   **Current State:** The agent has basic error handling but lacks sophisticated retry mechanisms or the ability to intelligently interpret and recover from failures.
     -   **Long-Term Plan:** Implement a robust error handling system with custom exception classes and recovery strategies.
-
-5.  **Hardcoded Knowledge Base Path:**
+4.  **Hardcoded Knowledge Base Path:**
     -   **Current State:** The path to the `knowledge_base` directory is hardcoded.
     -   **Long-Term Plan:** Make this path configurable via a central application configuration file to improve portability.
