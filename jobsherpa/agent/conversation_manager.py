@@ -56,7 +56,7 @@ class ConversationManager:
                 self._pending_prompt = None
                 self._context = {}
                 
-            return response, job_id
+            return response, job_id, self._is_waiting
 
         # --- This is a new conversation ---
         intent = self.intent_classifier.classify(prompt)
@@ -74,9 +74,9 @@ class ConversationManager:
                     self._is_waiting = True
                     self._pending_action = handler
                     self._pending_prompt = prompt
-                return response, job_id
+                return response, job_id, self._is_waiting
             else: # It's a query action
                 response = handler.run(prompt=prompt)
-                return response, None # No job ID for queries
+                return response, None, False # No job ID for queries, not waiting
         else:
-            return "Sorry, I'm not sure how to handle that.", None
+            return "Sorry, I'm not sure how to handle that.", None, False

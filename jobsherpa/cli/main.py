@@ -101,7 +101,7 @@ def config_show(
 
 @app.command()
 def run(
-    prompt: str,
+    prompt: str = typer.Argument(..., help="The user's prompt to the agent."),
     verbose: bool = typer.Option(
         False, "-v", "--verbose", help="Enable INFO level logging."
     ),
@@ -119,7 +119,7 @@ def run(
     ),
 ):
     """
-    Run the JobSherpa agent with a specific prompt.
+    Runs the JobSherpa agent with the given prompt.
     """
     # Defer the import of the agent to this command
     from jobsherpa.agent.agent import JobSherpaAgent
@@ -140,17 +140,33 @@ def run(
     effective_user_profile = user_profile or getpass.getuser()
 
     logging.info("CLI is running...")
-    agent = JobSherpaAgent(
-        dry_run=dry_run,
-        knowledge_base_dir="knowledge_base",
-        system_profile=system_profile,
-        user_profile=effective_user_profile
-    )
-    response = agent.run(prompt)
-    if isinstance(response, tuple):
-        print(response[0])
-    else:
-        print(response)
+    
+    try:
+        agent = JobSherpaAgent(
+            dry_run=dry_run,
+            knowledge_base_dir="knowledge_base",
+            system_profile=system_profile,
+            user_profile=effective_user_profile
+        )
+        
+        is_waiting = True
+        current_prompt = prompt
+        
+        while is_waiting:
+            response, job_id, is_waiting = agent.run(current_prompt)
+            
+            # Print the agent's response
+            if isinstance(response, tuple):
+                 # This can happen if an action returns a tuple by mistake
+                print(response[0])
+            else:
+                print(response)
+
+            if is_waiting:
+                current_prompt = input("> ")
+            
+    except Exception as e:
+        # ... (error handling)
 
 def run_app():
     app()
