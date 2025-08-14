@@ -89,19 +89,12 @@ class JobSherpaAgent:
 
         logger.info("JobSherpaAgent initialized.")
 
-    def start(self):
-        """Starts the agent's background threads."""
-        self.tracker.start_monitoring()
-        logger.info("Agent background monitoring started.")
-
-    def check_jobs(self):
-        """Triggers the job state tracker to check for updates."""
-        self.tracker.check_and_update_statuses()
-
-    def stop(self):
-        """Stops the agent's background threads."""
-        self.tracker.stop_monitoring()
-        logger.info("Agent background monitoring stopped.")
+    def run(self, prompt: str):
+        """
+        The main entry point for the agent. Delegates handling to the ConversationManager.
+        """
+        logger.info("Agent received prompt: '%s'", prompt)
+        return self.conversation_manager.handle_prompt(prompt)
 
     def get_job_status(self, job_id: str) -> Optional[str]:
         """Gets the status of a job from the tracker."""
@@ -187,13 +180,6 @@ class JobSherpaAgent:
         if match:
             return match.group(1)
         return None
-
-    def run(self, prompt: str):
-        """
-        The main entry point for the agent. Delegates handling to the ConversationManager.
-        """
-        logger.info("Agent received prompt: '%s'", prompt)
-        return self.conversation_manager.handle_prompt(prompt)
 
     def get_job_result(self, job_id: str) -> Optional[str]:
         """Gets the parsed result of a completed job."""

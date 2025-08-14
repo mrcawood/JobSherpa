@@ -1,4 +1,3 @@
-import threading
 import time
 import subprocess
 import re
@@ -16,9 +15,6 @@ class JobHistory:
     def __init__(self, history_file_path: Optional[str] = None):
         self.history_file_path = history_file_path
         self._jobs = self._load_state()
-        self._monitor_thread = None
-        self._stop_event = threading.Event()
-        self.cycle_done_event = threading.Event()
 
     def _load_state(self) -> dict:
         """Loads the job history from the JSON file."""
@@ -58,8 +54,20 @@ class JobHistory:
 
     def get_status(self, job_id: str) -> Optional[str]:
         """
-        Retrieves the status of a specific job.
+        Gets the status of a specific job. If the job is in a non-terminal
+        state, it actively checks for an update before returning.
         """
+        current_status = self._jobs.get(job_id, {}).get("status")
+
+        # If we don't know the job, or it's already finished, return the stored status.
+        if not current_status or current_status in ["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"]:
+            return current_status
+
+        # Otherwise, the job is PENDING or RUNNING, so check for a real-time update.
+        logger.debug("Actively checking status for non-terminal job: %s", job_id)
+        self.check_and_update_statuses(specific_job_id=job_id)
+
+        # Return the potentially updated status
         return self._jobs.get(job_id, {}).get("status")
 
     def set_status(self, job_id: str, new_status: str):
@@ -128,97 +136,99 @@ class JobHistory:
         except Exception as e:
             logger.warning("Error parsing file %s for job %s: %s", output_file_path, job_id, e, exc_info=True)
 
-    def _parse_squeue_status(self, squeue_output: str, job_id: str) -> Optional[str]:
+    def _parse_squeue_status(self, job_ids: list[str]) -> dict:
         """Parses the status from squeue output."""
-        if not squeue_output:
-            return None
-
-        # Normalize any escaped newlines ("\\n") to real newlines to handle mocked outputs
-        normalized_output = squeue_output.replace("\\n", "\n").strip()
-        lines = normalized_output.splitlines()
-
-        # Skip header (first line) and iterate over potential job rows
-        for line in lines[1:]:
-            if not line.strip():
-                continue
+        squeue_output = subprocess.run(
+            ["squeue", "--jobs=" + ",".join(job_ids), "--noheader", "--format=JobId,State"],
+            capture_output=True,
+            text=True,
+        )
+        logger.debug("squeue output:\n%s", squeue_output.stdout)
+        squeue_statuses = {}
+        for line in squeue_output.stdout.splitlines():
             parts = line.split()
-            if parts and parts[0] == job_id:
-                # Be robust to varying column layouts. Search for a known short SLURM state token.
-                known_running = {"R", "CG"}
-                known_pending = {"PD"}
+            if len(parts) > 1:
+                job_id = parts[0]
+                state = parts[1]
+                squeue_statuses[job_id] = self._normalize_squeue_state(state)
+        return squeue_statuses
 
-                # Search tokens (excluding job_id) for a known state
-                for token in parts[1:]:
-                    if token in known_running:
-                        return "RUNNING"
-                    if token in known_pending:
-                        return "PENDING"
-                # Other states like F, CA, TO etc. mean it's finished but we wait for sacct
-        return None  # Not found in squeue, might be completed
+    def _normalize_squeue_state(self, squeue_state: str) -> str:
+        """Normalizes various SQUEUE state strings to a common format."""
+        squeue_state = squeue_state.strip()
+        if squeue_state == "PENDING":
+            return "PENDING"
+        if squeue_state == "RUNNING":
+            return "RUNNING"
+        if squeue_state == "COMPLETED":
+            return "COMPLETED"
+        if squeue_state == "FAILED":
+            return "FAILED"
+        if squeue_state == "CANCELLED":
+            return "CANCELLED"
+        if squeue_state == "TIMEOUT":
+            return "TIMEOUT"
+        return squeue_state # Fallback for other states
 
-    def _parse_sacct_status(self, sacct_output: str, job_id: str) -> Optional[str]:
+    def _parse_sacct_status(self, job_ids: list[str]) -> dict:
         """Parses the final status from sacct output."""
-        lines = sacct_output.strip().split('\n')
-        for line in lines:
-            if line.startswith(job_id):
-                parts = line.split('|')
-                slurm_state = parts[1]
-                if slurm_state == "COMPLETED":
-                    return "COMPLETED"
-                else:
-                    return "FAILED" # Treat any other final state as FAILED
-        return None # Job not found in sacct, which is strange
+        sacct_output = subprocess.run(
+            ["sacct", "--jobs=" + ",".join(job_ids), "--noheader", "--format=JobId,State,ExitCode"],
+            capture_output=True,
+            text=True,
+        )
+        logger.debug("sacct output:\n%s", sacct_output.stdout)
+        sacct_statuses = {}
+        for line in sacct_output.stdout.splitlines():
+            parts = line.split('|')
+            if len(parts) > 1:
+                job_id = parts[0].strip()
+                state = parts[1].strip()
+                sacct_statuses[job_id] = self._normalize_sacct_state(state)
+        return sacct_statuses
 
-    def check_and_update_statuses(self):
+    def _normalize_sacct_state(self, sacct_state: str) -> str:
+        """Normalizes various SACCT state strings to a common format."""
+        sacct_state = sacct_state.strip()
+        if sacct_state == "COMPLETED":
+            return "COMPLETED"
+        if sacct_state == "FAILED":
+            return "FAILED"
+        if sacct_state == "CANCELLED":
+            return "CANCELLED"
+        if sacct_state == "TIMEOUT":
+            return "TIMEOUT"
+        return sacct_state # Fallback for other states
+
+    def check_and_update_statuses(self, specific_job_id: Optional[str] = None):
         """
-        The core logic for checking and updating job statuses by calling SLURM commands.
+        Checks the system scheduler for the current status of tracked jobs
+        that are in non-terminal states.
         """
-        for job_id, job_data in list(self._jobs.items()):
-            if job_data["status"] in ["PENDING", "RUNNING"]:
-                try:
-                    squeue_result = subprocess.run(
-                        ["squeue", "--job", job_id],
-                        capture_output=True,
-                        text=True,
-                    )
-                    logger.debug("squeue output for job %s:\n%s", job_id, squeue_result.stdout)
-                    new_status = self._parse_squeue_status(squeue_result.stdout, job_id)
-                    
-                    if new_status:
-                        self.set_status(job_id, new_status)
-                    else:
-                        # Job not in squeue, check sacct for final status
-                        sacct_result = subprocess.run(
-                            ["sacct", f"--jobs={job_id}", "--noheader", "--format=JobId,State,ExitCode"],
-                            capture_output=True,
-                            text=True,
-                        )
-                        logger.debug("sacct output for job %s:\n%s", job_id, sacct_result.stdout)
-                        final_status = self._parse_sacct_status(sacct_result.stdout, job_id)
-                        if final_status:
-                            self.set_status(job_id, final_status)
-                except FileNotFoundError:
-                    logger.error("SLURM commands (squeue, sacct) not found. Cannot check job status.")
-                    break
+        jobs_to_check = []
+        if specific_job_id and specific_job_id in self._jobs:
+            jobs_to_check = [specific_job_id]
+        else: # Check all non-terminal jobs
+            jobs_to_check = [
+                job_id for job_id, data in self._jobs.items() 
+                if data.get("status") in ["PENDING", "RUNNING"]
+            ]
 
-    def _monitor_loop(self):
-        """The main loop for the monitoring thread."""
-        while not self._stop_event.is_set():
-            self.check_and_update_statuses()
-            self._stop_event.wait(1)
+        if not jobs_to_check:
+            return
 
-    def start_monitoring(self):
-        """Starts the background monitoring thread."""
-        if not self._monitor_thread:
-            self.cycle_done_event.clear()
-            self._stop_event.clear()
-            self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
-            self._monitor_thread.start()
-
-    def stop_monitoring(self):
-        """Stops the background monitoring thread."""
-        if self._monitor_thread:
-            self._stop_event.set()
-            # No need to join, as it's a daemon thread that will exit.
-            # In a real app, we might want a more graceful shutdown.
-            self._monitor_thread = None
+        # Check squeue first for active jobs
+        squeue_statuses = self._parse_squeue_status(jobs_to_check)
+        
+        jobs_not_in_squeue = []
+        for job_id in jobs_to_check:
+            if job_id in squeue_statuses:
+                self.set_status(job_id, squeue_statuses[job_id])
+            else:
+                jobs_not_in_squeue.append(job_id)
+        
+        # For jobs no longer in squeue, check sacct for final status
+        if jobs_not_in_squeue:
+            sacct_statuses = self._parse_sacct_status(jobs_not_in_squeue)
+            for job_id, status in sacct_statuses.items():
+                self.set_status(job_id, status)

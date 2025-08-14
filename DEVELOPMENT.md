@@ -2,31 +2,30 @@
 
 This document outlines the current development goal, the roadmap to achieve it, and a transparent log of known technical debt and placeholder implementations.
 
-## Previous Goal: Implement Persistent User Configuration and Scoped Workspace (COMPLETED)
+## Previous Goal: Implement Agentic Architecture for Conversation and Memory (COMPLETED)
 
-The agent now has a robust system for managing user-specific settings and operating within a defined workspace. This was achieved by creating a `jobsherpa config` command for persistent user profiles (`knowledge_base/user/<username>.yaml`) and refactoring the agent to use the `workspace` setting from that profile for all file operations. This makes the agent's behavior explicit and provides a scalable foundation for future multi-user support.
+The agent has been successfully refactored into a modular, intent-driven system. It now features a `ConversationManager` that delegates tasks to specific `ActionHandlers` (`RunJobAction`, `QueryHistoryAction`) based on user intent. This is supported by a persistent `JobHistory` component, which gives the agent long-term memory and the ability to answer questions about past jobs. This new architecture provides a robust and extensible foundation for all future conversational features.
 
 ---
 
-## Current Goal: Implement Agentic Architecture for Conversation and Memory
+## Current Goal: Enhance Conversational Capabilities and Error Handling
 
-To evolve from a command-executor into a true conversational agent, we must refactor the core architecture. The current monolithic `agent.run` method is insufficient for handling different types of user queries (e.g., running jobs vs. asking about past jobs). This goal is to implement a modular, intent-driven architecture that provides a robust foundation for all future conversational features.
+Now that the core agentic architecture is in place, the next step is to make the agent's interactions more intelligent, resilient, and user-friendly. This involves moving beyond simple, rigid command execution and handling the inevitable errors and missing information that occur in real-world use cases.
 
-**The Vision:** The agent's core will be a `ConversationManager` that inspects the user's prompt to determine their intent. Based on that intent, it will delegate the task to a specific `ActionHandler` (e.g., `RunJobAction`, `QueryHistoryAction`). This is a foundational shift from a "doer" to a "knower and doer," enabling the agent to understand, remember, and act with much greater flexibility. A key part of this is introducing a persistent `JobHistory` to give the agent a long-term memory.
+**The Vision:** The agent should be able to handle ambiguity and missing information gracefully. If a required parameter is not found in a user's profile, the agent shouldn't just fail; it should engage the user in a dialogue to resolve the issue. This moves us closer to a truly helpful assistant that can guide users through the process of setting up and running their jobs.
 
 **Definition of Done:**
 
-1.  **New Core Components:**
-    -   A `ConversationManager` is created and becomes the new entry point for the agent's logic.
-    -   A simple, keyword-based `IntentClassifier` is implemented to distinguish between "run job" and "query history" intents.
-    -   The `JobStateTracker` is refactored into a persistent `JobHistory` component that saves its state to a file (e.g., `~/.jobsherpa/history.json`).
-2.  **Refactored Logic into Action Handlers:**
-    -   All logic for running a job (RAG, workspace creation, execution) is moved from `agent.py` into a new `RunJobAction` handler.
-    -   New logic for querying the `JobHistory` is implemented in a `QueryHistoryAction` handler.
-3.  **Support for "What was the result of my last job?":**
-    -   The `QueryHistoryAction` can successfully find the most recent job in the `JobHistory`.
-    -   The agent can formulate a correct, human-readable response based on the parsed results of the last job.
-    -   The `output_parser` format in recipes is enhanced to support parsing multiple named values (e.g., "completion_time", "timesteps").
+1.  **Conversational Parameter Onboarding:**
+    -   If the `RunJobAction` handler determines that a required parameter (e.g., `allocation`) is missing, it will not fail immediately.
+    -   Instead, it will return a specific message to the user, asking for the missing information (e.g., "I see you're missing a default allocation. What allocation should I use for this job?").
+    -   The agent will then be able to receive the user's response in a subsequent prompt and re-attempt the job submission with the new information.
+    -   (Stretch Goal): The agent will offer to save the newly provided information to the user's configuration file for future use.
+2.  **Richer `QueryHistoryAction`:**
+    -   The action will be able to answer more flexible questions, such as "What was the status of my last 3 jobs?" or "Show me all my failed jobs."
+3.  **Refined Error Handling:**
+    -   The agent will provide more user-friendly error messages for common issues (e.g., template not found, tool execution failure).
+    -   Custom exception classes will be introduced to better manage internal error states.
 
 ---
 
