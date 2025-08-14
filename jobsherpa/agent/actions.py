@@ -56,31 +56,36 @@ class RunJobAction:
         logger.debug("Found matching recipe: %s", recipe["name"])
 
         if "template" in recipe:
-            # Build the template rendering context
-            context = {}
-            # 1. Start with system defaults (if any)
+            # Build the template rendering context, starting with the conversation context
+            template_context = context.copy() if context else {}
+            
+            # Build the default context
+            default_context = {}
             if self.system_config and "defaults" in self.system_config:
-                context.update(self.system_config["defaults"])
-            # 2. Add user defaults, overwriting system defaults
+                default_context.update(self.system_config["defaults"])
             if self.user_config:
                 if isinstance(self.user_config, UserConfig):
-                    # Support both Pydantic v2 (model_dump) and v1 (dict)
                     defaults_obj = self.user_config.defaults
                     try:
-                        defaults_dict = defaults_obj.model_dump(exclude_none=True)  # Pydantic v2
+                        defaults_dict = defaults_obj.model_dump(exclude_none=True)
                     except AttributeError:
-                        defaults_dict = defaults_obj.dict(exclude_none=True)  # Pydantic v1
-                    context.update(defaults_dict)
+                        defaults_dict = defaults_obj.dict(exclude_none=True)
+                    default_context.update(defaults_dict)
                 elif isinstance(self.user_config, dict) and "defaults" in self.user_config:
-                    context.update(self.user_config["defaults"])
-            # 3. Add recipe-specific args, overwriting user/system defaults
-            context.update(recipe.get("template_args", {}))
+                    default_context.update(self.user_config["defaults"])
+            
+            # Merge defaults, allowing conversational context to override
+            for key, value in default_context.items():
+                template_context.setdefault(key, value)
+            
+            # Add recipe-specific args, which have the highest precedence
+            template_context.update(recipe.get("template_args", {}))
 
             # Check for missing requirements
             missing_params = []
             required_params = self.system_config.get("job_requirements", [])
             for param in required_params:
-                if param not in context or context.get(param) is None:
+                if param not in template_context or template_context.get(param) is None:
                     missing_params.append(param)
 
             if missing_params:
