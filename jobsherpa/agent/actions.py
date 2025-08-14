@@ -37,14 +37,11 @@ class RunJobAction:
         self.rag_pipeline = self._initialize_rag_pipeline()
 
     def run(self, prompt: str, context: Optional[dict] = None) -> tuple[str, Optional[str], bool, Optional[str]]:
-        """
-        The main entry point for the agent to process a user prompt.
-        Returns:
-            - A user-facing response string.
-            - An optional job ID.
-            - A boolean indicating if the agent is waiting for more input.
-            - The specific parameter needed, if waiting.
-        """
+        if not self.workspace_manager.base_path:
+            return "I need a workspace to run this job. What directory should I use?", None, True, "workspace"
+        if not self.system_config:
+            return "I need a system profile to run this job. What system should I use?", None, True, "system"
+            
         logger.info("Agent received prompt: '%s'", prompt)
 
         recipe = self._find_matching_recipe(prompt)

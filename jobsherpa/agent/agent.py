@@ -39,34 +39,31 @@ class JobSherpaAgent:
         profile_path = None # Ensure profile_path is always defined
         if user_config_override:
             user_config = user_config_override
+            profile_path = None # No path when overriding
         else:
             profile_path = os.path.join(knowledge_base_dir, "user", f"{user_profile}.yaml")
             if not os.path.exists(profile_path):
-                raise ValueError(f"User profile not found at {profile_path}")
-            user_config_manager = ConfigManager(config_path=profile_path)
-            user_config = user_config_manager.load()
+                from jobsherpa.config import UserConfig, UserConfigDefaults
+                logger.warning(f"User profile not found at {profile_path}. Starting with empty configuration.")
+                # Create a new, empty config. The agent will ask for required values.
+                user_config = UserConfig(defaults=UserConfigDefaults(workspace="", system=""))
+                profile_path = None # No path, so don't offer to save later
+            else:
+                user_config_manager = ConfigManager(config_path=profile_path)
+                user_config = user_config_manager.load()
         
         self.workspace = user_config.defaults.workspace
-        if not self.workspace:
-             raise ValueError(
-                "User profile must contain a 'workspace' key in the 'defaults' section. "
-                "You can set it by running: jobsherpa config set workspace <path>"
-            )
-        
-        history_dir = os.path.join(self.workspace, ".jobsherpa")
+        history_dir = os.path.join(self.workspace, ".jobsherpa") if self.workspace else os.path.join(os.getcwd(), ".jobsherpa")
         os.makedirs(history_dir, exist_ok=True)
         history_file = os.path.join(history_dir, "history.json")
         
         effective_system_profile = system_profile or user_config.defaults.system
-        if not effective_system_profile:
-            raise ValueError(
-                    "User profile must contain a 'system' key in the 'defaults' section. "
-                    "You can set it by running: jobsherpa config set system <system_name>"
-                )
         
-        system_config_path = os.path.join(knowledge_base_dir, "system", f"{effective_system_profile}.yaml")
-        with open(system_config_path, 'r') as f:
-            system_config = yaml.safe_load(f)
+        system_config = None
+        if effective_system_profile:
+            system_config_path = os.path.join(knowledge_base_dir, "system", f"{effective_system_profile}.yaml")
+            with open(system_config_path, 'r') as f:
+                system_config = yaml.safe_load(f)
 
         # --- 2. Initialize Components ---
         tool_executor = ToolExecutor(dry_run=dry_run)

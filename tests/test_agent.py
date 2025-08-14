@@ -61,3 +61,20 @@ def test_agent_run_delegates_to_conversation_manager(
     agent.run(prompt)
     
     manager_instance.handle_prompt.assert_called_once_with(prompt)
+
+def test_agent_initialization_handles_missing_user_profile(mocker):
+    """
+    Tests that if a user profile YAML does not exist, the agent initializes
+    with an empty config instead of crashing.
+    """
+    mocker.patch("os.path.exists", return_value=False)
+    mock_safe_load = mocker.patch("yaml.safe_load")
+    mocker.patch("jobsherpa.agent.actions.RunJobAction._initialize_rag_pipeline")
+    
+    # We don't provide a user_config_override, so the agent will try to load one.
+    agent = JobSherpaAgent(user_profile="new_user")
+    
+    # Assert that the agent created an empty, in-memory config.
+    assert agent.workspace == ""
+    # The conversation manager should not have a path, preventing save offers.
+    assert agent.conversation_manager.user_profile_path is None
