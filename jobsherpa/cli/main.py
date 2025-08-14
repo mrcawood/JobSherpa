@@ -3,7 +3,7 @@ import logging
 import yaml
 import os
 from typing import Optional
-from jobsherpa.agent.agent import JobSherpaAgent
+# from jobsherpa.agent.agent import JobSherpaAgent # <-- This will be moved
 
 app = typer.Typer()
 config_app = typer.Typer()
@@ -88,13 +88,16 @@ def run(
     system_profile: str = typer.Option(
         None, "--system-profile", help="The name of the system profile to use from the knowledge base."
     ),
-    user_profile: str = typer.Option(
+    user_profile: Optional[str] = typer.Option(
         None, "--user-profile", help="The name of the user profile to use for default values."
     ),
 ):
     """
     Run the JobSherpa agent with a specific prompt.
     """
+    # Defer the import of the agent to this command
+    from jobsherpa.agent.agent import JobSherpaAgent
+
     # Configure logging
     log_level = logging.WARNING
     if debug:
