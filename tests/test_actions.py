@@ -14,11 +14,17 @@ MOCK_RECIPE = {
     "tool": "submit",
     "output_parser": {"file": "rng.txt", "parser_regex": "Random number: (\\d+)"}
 }
+MOCK_NON_TEMP_RECIPE = {"name": "hello_world", "tool": "echo", "args": ["hello"]}
 
 @pytest.fixture
 def run_job_action(tmp_path):
     """Fixture to create a RunJobAction instance with mocked dependencies."""
-    MOCK_USER_CONFIG["defaults"]["workspace"] = str(tmp_path)
+    # Reset the system config to a clean state for each test
+    system_config = {
+        "name": "mock_slurm",
+        "commands": {"submit": "sbatch"},
+        "job_requirements": ["partition", "allocation"]
+    }
     
     mock_history = MagicMock()
     mock_workspace_manager = MagicMock()
@@ -30,7 +36,7 @@ def run_job_action(tmp_path):
         tool_executor=mock_tool_executor,
         knowledge_base_dir="kb",
         user_config=MOCK_USER_CONFIG,
-        system_config=MOCK_SYSTEM_CONFIG,
+        system_config=system_config,
     )
     # Replace the real RAG pipeline with a mock for targeted testing
     action.rag_pipeline = MagicMock()
@@ -100,3 +106,67 @@ def test_run_job_action_fails_with_missing_requirements(run_job_action):
     assert "Missing required job parameters" in response
     assert job_id is None
     run_job_action.tool_executor.execute.assert_not_called()
+
+def test_run_job_action_executes_non_templated_job(run_job_action):
+    """
+    Tests that the action handler can correctly execute a simple job
+    that does not use a template.
+    """
+    # 1. Setup
+    run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_NON_TEMP_RECIPE)]}
+    run_job_action.tool_executor.execute.return_value = "hello" # No job ID for this simple command
+
+    # 2. Act
+    response, job_id = run_job_action.run("prompt")
+
+    # 3. Assert
+    # Assert RAG was used
+    run_job_action.rag_pipeline.run.assert_called_once()
+    
+    # Assert the correct tool and args were executed in the base workspace
+    run_job_action.tool_executor.execute.assert_called_with(
+        "echo", ["hello"], workspace=run_job_action.workspace_manager.base_path
+    )
+    
+    # Assert no job was registered, as no job ID was returned
+    run_job_action.job_history.register_job.assert_not_called()
+    assert job_id is None
+    assert "Execution result: hello" in response
+
+def test_run_job_action_handles_job_submission_failure(run_job_action, tmp_path):
+    """
+    Tests that the action handles the case where the tool executor
+    does not return a valid job ID string.
+    """
+    # 1. Setup
+    # This test should not be affected by state from other tests
+    assert "some_other_thing" not in run_job_action.system_config["job_requirements"]
+    
+    job_uuid = uuid.uuid4()
+    job_dir = tmp_path / str(job_uuid)
+    mock_job_workspace = JobWorkspace(
+        job_dir=job_dir, output_dir=job_dir / "output", slurm_dir=job_dir / "slurm", script_path=job_dir / "job_script.sh"
+    )
+    mock_template = MagicMock()
+    mock_template.render.return_value = "script content"
+
+    run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE)]}
+    run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
+    # Simulate a failed submission (e.g., sbatch returns an error)
+    run_job_action.tool_executor.execute.return_value = "sbatch: error: Invalid project account"
+
+    # 2. Act
+    with patch("jinja2.Environment.get_template", return_value=mock_template), \
+         patch("builtins.open", mock_open()):
+        response, job_id = run_job_action.run("prompt")
+
+    # 3. Assert
+    # Assert that the submission was attempted
+    run_job_action.tool_executor.execute.assert_called_once()
+    
+    # Assert that no job was registered
+    run_job_action.job_history.register_job.assert_not_called()
+    
+    # Assert that the response contains the error from the tool
+    assert job_id is None
+    assert "Execution result: sbatch: error: Invalid project account" in response
