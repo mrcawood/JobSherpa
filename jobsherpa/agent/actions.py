@@ -4,6 +4,7 @@ import yaml
 import jinja2
 import logging
 from typing import Optional, Union
+from pathlib import Path
 
 from jobsherpa.agent.job_history import JobHistory
 from jobsherpa.agent.workspace_manager import WorkspaceManager
@@ -37,8 +38,28 @@ class RunJobAction:
         self.rag_pipeline = self._initialize_rag_pipeline()
 
     def run(self, prompt: str, context: Optional[dict] = None) -> tuple[str, Optional[str], bool, Optional[str]]:
-        if not self.workspace_manager.base_path:
+        # First, try to update the agent's configuration from the conversational context
+        if context:
+            if 'workspace' in context and not self.user_config.defaults.workspace:
+                workspace_path = context['workspace']
+                self.user_config.defaults.workspace = workspace_path
+                # The workspace manager was created with the old empty path, so we update it too
+                self.workspace_manager.base_path = Path(workspace_path)
+                
+            if 'system' in context and not self.system_config:
+                system_name = context['system']
+                system_config_path = os.path.join(self.knowledge_base_dir, "system", f"{system_name}.yaml")
+                if os.path.exists(system_config_path):
+                    with open(system_config_path, 'r') as f:
+                        self.system_config = yaml.safe_load(f)
+                    self.user_config.defaults.system = system_name
+                else:
+                    return f"I can't find a system profile named '{system_name}'. What system should I use?", None, True, "system"
+
+        # Now, with potentially updated configs, perform the validation checks
+        if not self.user_config.defaults.workspace:
             return "I need a workspace to run this job. What directory should I use?", None, True, "workspace"
+        
         if not self.system_config:
             return "I need a system profile to run this job. What system should I use?", None, True, "system"
             

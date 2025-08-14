@@ -6,6 +6,7 @@ from jobsherpa.agent.actions import RunJobAction
 from jobsherpa.agent.workspace_manager import JobWorkspace
 from jobsherpa.agent.actions import QueryHistoryAction
 from jobsherpa.config import UserConfig, UserConfigDefaults
+from pathlib import Path
 
 # A common set of mock configs for tests
 MOCK_USER_CONFIG = {"defaults": {"workspace": "/tmp", "partition": "dev", "allocation": "abc-123", "system": "mock_slurm"}}
@@ -32,6 +33,7 @@ def run_job_action(mocker, tmp_path):
     mock_job_history = MagicMock()
     mock_workspace_manager = MagicMock()
     mock_tool_executor = MagicMock()
+    mock_tool_executor.execute.return_value = "Submitted batch job 12345"
     
     # Use a Pydantic object for the user_config to match the new system
     user_config = UserConfig(
@@ -318,3 +320,32 @@ def test_run_job_action_asks_for_missing_parameters(run_job_action):
     assert is_waiting is True
     assert param_needed == "allocation"
     assert "I need a value for 'allocation'" in response
+
+def test_run_job_action_gathers_workspace_and_system_from_context(run_job_action, mocker):
+    """
+    Tests that if the agent starts with no config, it can gather the workspace
+    and system from the conversational context and load them correctly.
+    """
+    # 1. Setup: Start with an empty user config and no system config
+    run_job_action.user_config.defaults.workspace = ""
+    run_job_action.system_config = None
+    run_job_action.workspace_manager.base_path = None
+    
+    # Mock os.path.exists to simulate finding the system file
+    mocker.patch("os.path.exists", return_value=True)
+    # Mock open to provide the system file content
+    mocked_open = mock_open(read_data="name: mock_slurm")
+    mocker.patch("builtins.open", mocked_open)
+
+    # 2. Act: Provide the workspace in the first turn
+    response, _, _, _ = run_job_action.run(prompt="run job", context={"workspace": "/tmp/test_ws"})
+    assert response == "I need a system profile to run this job. What system should I use?"
+    
+    # 3. Act: Provide the system in the second turn
+    response, _, _, _ = run_job_action.run(prompt="run job", context={"workspace": "/tmp/test_ws", "system": "mock_slurm"})
+    
+    # 4. Assert: The action now proceeds to the RAG step (or fails there, which is fine)
+    assert "I need a system profile" not in response
+    assert "I need a workspace" not in response
+    assert run_job_action.system_config["name"] == "mock_slurm"
+    assert run_job_action.workspace_manager.base_path == Path("/tmp/test_ws")
