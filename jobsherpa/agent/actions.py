@@ -27,6 +27,10 @@ class RunJobAction:
         user_config: dict,
         system_config: dict,
     ):
+        print("--- DEBUG: Initializing RunJobAction ---")
+        print("User Config:", user_config)
+        print("System Config:", system_config)
+        print("------------------------------------")
         self.job_history = job_history
         self.workspace_manager = workspace_manager
         self.tool_executor = tool_executor
