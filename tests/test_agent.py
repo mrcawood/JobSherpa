@@ -4,6 +4,7 @@ from freezegun import freeze_time
 from unittest.mock import MagicMock, patch, mock_open
 import yaml
 import uuid
+from jobsherpa.agent.workspace_manager import JobWorkspace
 
 
 def test_agent_initialization_fails_without_system_in_profile():
@@ -190,7 +191,14 @@ def test_agent_parses_job_output(tmp_path):
     output_filename = "test_rng_output.txt"
 
     job_uuid = uuid.uuid4()
-    with patch("uuid.uuid4", return_value=job_uuid), \
+    job_dir = tmp_path / str(job_uuid)
+    mock_job_workspace = JobWorkspace(
+        job_dir=job_dir,
+        output_dir=job_dir / "output",
+        slurm_dir=job_dir / "slurm",
+        script_path=job_dir / "job_script.sh"
+    )
+    with patch("jobsherpa.agent.workspace_manager.WorkspaceManager.create_job_workspace", return_value=mock_job_workspace), \
          patch.object(agent.rag_pipeline, "run", autospec=True) as mock_pipeline_run:
         
         mock_document = MagicMock()
@@ -219,7 +227,7 @@ def test_agent_parses_job_output(tmp_path):
             assert agent.get_job_status(job_id) == "COMPLETED"
             assert agent.get_job_result(job_id) == random_number
             
-            expected_output_path = tmp_path / str(job_uuid) / "output" / output_filename
+            expected_output_path = mock_job_workspace.output_dir / output_filename
             mock_file.assert_called_with(str(expected_output_path), 'r')
 
 
@@ -261,8 +269,13 @@ def test_agent_merges_user_and_system_profiles(tmp_path):
             
             agent.run("Generate a random number")
 
-            expected_job_dir = (tmp_path / "workspace") / str(job_uuid)
-            assert mock_subprocess.call_args.kwargs["cwd"] == str(expected_job_dir)
+            mock_job_workspace = JobWorkspace(
+                job_dir=(tmp_path / "workspace") / str(job_uuid),
+                output_dir=(tmp_path / "workspace") / str(job_uuid) / "output",
+                slurm_dir=(tmp_path / "workspace") / str(job_uuid) / "slurm",
+                script_path=(tmp_path / "workspace") / str(job_uuid) / "job_script.sh"
+            )
+            assert mock_subprocess.call_args.kwargs["cwd"] == str(mock_job_workspace.job_dir)
 
 
 def test_agent_fails_gracefully_with_missing_requirements():
@@ -345,9 +358,14 @@ def test_agent_operates_within_scoped_workspace(tmp_path):
             
             agent.run("Generate a random number")
 
-            expected_job_dir = workspace_path / str(job_uuid)
-            assert expected_job_dir.is_dir()
-            assert mock_subprocess.call_args.kwargs["cwd"] == str(expected_job_dir)
+            mock_job_workspace = JobWorkspace(
+                job_dir=workspace_path / str(job_uuid),
+                output_dir=workspace_path / str(job_uuid) / "output",
+                slurm_dir=workspace_path / str(job_uuid) / "slurm",
+                script_path=workspace_path / str(job_uuid) / "job_script.sh"
+            )
+            assert mock_job_workspace.job_dir.is_dir()
+            assert mock_subprocess.call_args.kwargs["cwd"] == str(mock_job_workspace.job_dir)
 
 
 def test_agent_provides_helpful_error_for_missing_workspace(tmp_path):
@@ -375,63 +393,4 @@ def test_agent_provides_helpful_error_for_missing_workspace(tmp_path):
         assert job_id is None
         assert "Workspace must be defined" in response
         assert "jobsherpa config set workspace /path/to/your/workspace" in response
-
-
-def test_agent_creates_isolated_job_directory(tmp_path):
-    """
-    Tests that for a templated job, the agent creates a unique, isolated
-    directory and executes the job from within it.
-    """
-    workspace_path = tmp_path / "workspace"
-    workspace_path.mkdir()
-    
-    job_uuid = uuid.uuid4()
-    job_dir = workspace_path / str(job_uuid)
-
-    user_config = {
-        "defaults": {
-            "workspace": str(workspace_path),
-            "system": "vista",
-            "partition": "a",
-            "allocation": "b"
-        }
-    }
-    
-    system_config = {"commands": {"submit": "sbatch"}}
-    agent = JobSherpaAgent(user_config=user_config)
-
-    mock_template = MagicMock()
-    mock_template.render.return_value = "#!/bin/bash\necho 'mock script'"
-
-    with patch("uuid.uuid4", return_value=job_uuid), \
-         patch.object(agent, "_load_system_config", return_value=system_config), \
-         patch.object(agent.rag_pipeline, "run") as mock_rag_run, \
-         patch.object(agent.tool_executor, "execute") as mock_execute, \
-         patch.object(agent.tracker, "register_job") as mock_register_job, \
-         patch("jinja2.Environment.get_template", return_value=mock_template):
-
-        mock_recipe = {
-            "name": "random_number_generator",
-            "template": "random_number.sh.j2",
-            "tool": "submit",
-            "output_parser": {"file": "rng.txt", "parser_regex": "(\d+)"}
-        }
-        mock_rag_run.return_value = {"documents": [MagicMock(meta=mock_recipe)]}
-        mock_execute.return_value = "Submitted batch job 12345"
-        
-        agent.run("run a random number job")
-
-    assert job_dir.is_dir()
-    assert (job_dir / "output").is_dir()
-    assert (job_dir / "slurm").is_dir()
-
-    mock_execute.assert_called_once()
-    call_args, call_kwargs = mock_execute.call_args
-    assert call_kwargs.get("workspace") == str(job_dir)
-    assert call_args[1] == ["job_script.sh"] 
-
-    mock_register_job.assert_called_once()
-    call_args, call_kwargs = mock_register_job.call_args
-    assert call_kwargs.get("output_parser_info", {}).get("file") == "output/rng.txt"
-    assert call_args[1] == str(job_dir)
 

@@ -7,6 +7,7 @@ import uuid
 from typing import Optional
 from jobsherpa.agent.tool_executor import ToolExecutor
 from jobsherpa.agent.job_state_tracker import JobStateTracker
+from jobsherpa.agent.workspace_manager import WorkspaceManager
 from haystack.document_stores import InMemoryDocumentStore
 from haystack.nodes import BM25Retriever
 from haystack import Pipeline
@@ -37,6 +38,11 @@ class JobSherpaAgent:
         self.user_config = user_config or self._load_user_config(user_profile)
         self.workspace = self.user_config.get("defaults", {}).get("workspace") if self.user_config else None
 
+        if self.workspace:
+            self.workspace_manager = WorkspaceManager(base_path=self.workspace)
+        else:
+            self.workspace_manager = None
+        
         # Determine the system profile to use
         effective_system_profile = system_profile
         if not effective_system_profile:
@@ -168,12 +174,7 @@ class JobSherpaAgent:
         
         logger.debug("Found matching recipe: %s", recipe["name"])
 
-        job_dir = self.workspace # Default job dir is the workspace itself
-
-        # Check if the recipe uses a template
         if "template" in recipe:
-            template_name = recipe["template"]
-            
             # Build the template rendering context
             context = {}
             # 1. Start with system defaults (if any)
@@ -195,10 +196,10 @@ class JobSherpaAgent:
                     logger.error(error_msg)
                     return error_msg, None
 
-            logger.info("Rendering script from template: %s", template_name)
+            logger.info("Rendering script from template: %s", recipe["template"])
             
             # Ensure workspace is defined for templated jobs
-            if not self.workspace:
+            if not self.workspace_manager:
                 error_msg = (
                     "Workspace must be defined in user profile for templated jobs.\n"
                     "You can set it by running: jobsherpa config set workspace /path/to/your/workspace"
@@ -207,34 +208,27 @@ class JobSherpaAgent:
                 return error_msg, None
 
             # Create a unique, isolated directory for this job run
-            job_id = str(uuid.uuid4())
-            job_dir = os.path.join(self.workspace, job_id)
-            output_dir = os.path.join(job_dir, "output")
-            slurm_dir = os.path.join(job_dir, "slurm")
-            os.makedirs(output_dir, exist_ok=True)
-            os.makedirs(slurm_dir, exist_ok=True)
-            logger.info("Created isolated job directory: %s", job_dir)
+            job_workspace = self.workspace_manager.create_job_workspace()
+            logger.info("Created isolated job directory: %s", job_workspace.job_dir)
 
             # Add job-specific paths to the rendering context
-            context["job_dir"] = job_dir
-            context["output_dir"] = output_dir
-            context["slurm_dir"] = slurm_dir
+            context["job_dir"] = str(job_workspace.job_dir)
+            context["output_dir"] = str(job_workspace.output_dir)
+            context["slurm_dir"] = str(job_workspace.slurm_dir)
 
             # Create a Jinja2 environment
             template_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'tools')
             env = jinja2.Environment(loader=jinja2.FileSystemLoader(template_dir))
             
             try:
-                template = env.get_template(template_name)
+                template = env.get_template(recipe["template"])
                 rendered_script = template.render(context)
                 logger.debug("Rendered script content:\n%s", rendered_script)
 
                 # Write the rendered script to a file in the isolated job directory
-                script_filename = "job_script.sh"
-                script_path = os.path.join(job_dir, script_filename)
-                with open(script_path, 'w') as f:
+                with open(job_workspace.script_path, 'w') as f:
                     f.write(rendered_script)
-                logger.info("Wrote rendered script to: %s", script_path)
+                logger.info("Wrote rendered script to: %s", job_workspace.script_path)
 
                 # The "tool" in a templated recipe is the command to execute the script
                 submit_command = recipe["tool"]
@@ -242,11 +236,15 @@ class JobSherpaAgent:
                     submit_command = self.system_config["commands"][submit_command]
 
                 # The ToolExecutor will now execute from within the job directory
-                execution_result = self.tool_executor.execute(submit_command, [script_filename], workspace=job_dir)
+                execution_result = self.tool_executor.execute(
+                    submit_command, 
+                    [job_workspace.script_path.name], 
+                    workspace=str(job_workspace.job_dir)
+                )
 
             except jinja2.TemplateNotFound:
-                logger.error("Template '%s' not found in tools directory.", template_name)
-                return f"Error: Template '{template_name}' not found.", None
+                logger.error("Template '%s' not found in tools directory.", recipe["template"])
+                return f"Error: Template '{recipe['template']}' not found.", None
             except Exception as e:
                 logger.error("Error rendering template: %s", e, exc_info=True)
                 return f"Error rendering template: {e}", None
@@ -262,13 +260,14 @@ class JobSherpaAgent:
 
         slurm_job_id = self._parse_job_id(execution_result)
         if slurm_job_id:
+            job_dir_to_register = str(job_workspace.job_dir) if 'job_workspace' in locals() else self.workspace
             # Pass the parser info and job directory to the tracker
             output_parser = recipe.get("output_parser")
             # If a parser exists, prepend the output directory to its file path
             if output_parser and 'file' in output_parser:
                 output_parser['file'] = os.path.join('output', output_parser['file'])
             
-            self.tracker.register_job(slurm_job_id, job_dir, output_parser_info=output_parser)
+            self.tracker.register_job(slurm_job_id, job_dir_to_register, output_parser_info=output_parser)
             logger.info("Job %s submitted successfully.", slurm_job_id)
             response = f"Found recipe '{recipe['name']}'.\nJob submitted successfully with ID: {slurm_job_id}"
             return response, slurm_job_id
