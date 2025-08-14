@@ -99,6 +99,28 @@ def config_show(
         print(f.read())
 
 
+def setup_logging(level: int):
+    """
+    Forcefully configures the root logger to the desired level and format.
+    
+    This function removes all existing handlers from the root logger and adds a
+    new, configured StreamHandler. This ensures that our logging settings
+    take precedence over any library-level configurations.
+    """
+    root_logger = logging.getLogger()
+    # Remove any existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+        
+    # Set the desired level on the root logger itself
+    root_logger.setLevel(level)
+    
+    # Add our new, configured handler
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    root_logger.addHandler(handler)
+
 @app.command()
 def run(
     prompt: str = typer.Argument(..., help="The user's prompt to the agent."),
@@ -106,7 +128,7 @@ def run(
         False, "-v", "--verbose", help="Enable INFO level logging."
     ),
     debug: bool = typer.Option(
-        False, "--debug", help="Enable DEBUG level logging."
+        False, "-d", "--debug", help="Enable DEBUG level logging."
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Run in dry-run mode without executing real commands."
@@ -121,34 +143,17 @@ def run(
     """
     Runs the JobSherpa agent with the given prompt.
     """
-    # Defer the import of the agent to this command
-    from jobsherpa.agent.agent import JobSherpaAgent
-
-    # Set up logging properly to override any library settings
+    # --- 1. Set up logging FIRST ---
     log_level = logging.WARNING
-    if verbose:
-        log_level = logging.INFO
     if debug:
         log_level = logging.DEBUG
+    elif verbose:
+        log_level = logging.INFO
+    setup_logging(log_level)
+
+    # --- 2. Defer agent import until after logging is configured ---
+    from jobsherpa.agent.agent import JobSherpaAgent
     
-    # Get the root logger and remove any existing handlers
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers:
-        root_logger.removeHandler(handler)
-        
-    # Add our own handler with the desired level and format
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    root_logger.addHandler(handler)
-    root_logger.setLevel(log_level)
-
-
-    if verbose:
-        logging.basicConfig(level=logging.INFO)
-    if debug:
-        logging.basicConfig(level=logging.DEBUG)
-
     effective_user_profile = user_profile if user_profile else getpass.getuser()
 
     logging.info("CLI is running...")
