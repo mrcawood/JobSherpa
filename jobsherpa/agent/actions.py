@@ -200,5 +200,42 @@ class QueryHistoryAction:
         self.job_history = job_history
 
     def run(self, prompt: str):
-        # Placeholder for now
-        pass
+        job_id = self._extract_job_id(prompt)
+
+        if not job_id:
+            return "I'm sorry, I couldn't determine which job you're asking about. Please specify a job ID."
+
+        if job_id == "last":
+            job_id = self.job_history.get_latest_job_id()
+            if not job_id:
+                return "I couldn't find any jobs in your history."
+
+        status = self.job_history.get_status(job_id)
+        if not status:
+            return f"Sorry, I couldn't find any information for job ID {job_id}."
+
+        result = self.job_history.get_result(job_id)
+        
+        if result:
+            return f"The result of job {job_id} ({status}) is: {result}"
+        elif status == "COMPLETED":
+            return f"Job {job_id} is {status}, but a result could not be parsed."
+        else:
+            return f"Job {job_id} is still {status}. The result is not yet available."
+
+    def _extract_job_id(self, prompt: str) -> Optional[str]:
+        """Extracts a job ID or the keyword 'last' from the prompt."""
+        prompt = prompt.lower()
+        if "last" in prompt or "latest" in prompt or "recent" in prompt:
+            return "last"
+        
+        match = re.search(r"job\s+(\d+)", prompt)
+        if match:
+            return match.group(1)
+        
+        # Simple fallback for just a number
+        match = re.search(r"(\d{4,})", prompt)
+        if match:
+            return match.group(1)
+            
+        return None

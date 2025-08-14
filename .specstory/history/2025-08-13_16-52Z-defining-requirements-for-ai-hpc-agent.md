@@ -32622,3 +32622,908 @@ First, I will add a test for the **non-templated job execution path** to `tests/
 
 ---
 
+<details><summary>Edit file: tests/test_actions.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -15,4 +15,5 @@
+      "output_parser": {"file": "rng.txt", "parser_regex": "Random number: (\\d+)"}
+  }
++ MOCK_NON_TEMP_RECIPE = {"name": "hello_world", "tool": "echo", "args": ["hello"]}
+  
+  @pytest.fixture
+```
+
+**Chunk 2**
+Lines added: 26, lines removed: undefined
+
+```diff
+@@ -101,3 +102,29 @@
+      assert job_id is None
+      run_job_action.tool_executor.execute.assert_not_called()
++ 
++ def test_run_job_action_executes_non_templated_job(run_job_action):
++     """
++     Tests that the action handler can correctly execute a simple job
++     that does not use a template.
++     """
++     # 1. Setup
++     run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_NON_TEMP_RECIPE)]}
++     run_job_action.tool_executor.execute.return_value = "hello" # No job ID for this simple command
++ 
++     # 2. Act
++     response, job_id = run_job_action.run("prompt")
++ 
++     # 3. Assert
++     # Assert RAG was used
++     run_job_action.rag_pipeline.run.assert_called_once()
++     
++     # Assert the correct tool and args were executed in the base workspace
++     run_job_action.tool_executor.execute.assert_called_with(
++         "echo", ["hello"], workspace=run_job_action.workspace_manager.base_path
++     )
++     
++     # Assert no job was registered, as no job ID was returned
++     run_job_action.job_history.register_job.assert_not_called()
++     assert job_id is None
++     assert "Execution result: hello" in response
+  
+```
+
+</details>
+
+---
+
+Next, I will add a test for **handling job submission failures** to `tests/test_actions.py`. This test will ensure the agent behaves gracefully when the `tool_executor` does not return the expected job ID string.
+
+---
+
+<details><summary>Edit file: tests/test_actions.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 35, lines removed: undefined
+
+```diff
+@@ -128,3 +128,38 @@
+      assert job_id is None
+      assert "Execution result: hello" in response
++ 
++ def test_run_job_action_handles_job_submission_failure(run_job_action, tmp_path):
++     """
++     Tests that the action handles the case where the tool executor
++     does not return a valid job ID string.
++     """
++     # 1. Setup
++     job_uuid = uuid.uuid4()
++     job_dir = tmp_path / str(job_uuid)
++     mock_job_workspace = JobWorkspace(
++         job_dir=job_dir, output_dir=job_dir / "output", slurm_dir=job_dir / "slurm", script_path=job_dir / "job_script.sh"
++     )
++     mock_template = MagicMock()
++     mock_template.render.return_value = "script content"
++ 
++     run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE)]}
++     run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
++     # Simulate a failed submission (e.g., sbatch returns an error)
++     run_job_action.tool_executor.execute.return_value = "sbatch: error: Invalid project account"
++ 
++     # 2. Act
++     with patch("jinja2.Environment.get_template", return_value=mock_template), \
++          patch("builtins.open", mock_open()):
++         response, job_id = run_job_action.run("prompt")
++ 
++     # 3. Assert
++     # Assert that the submission was attempted
++     run_job_action.tool_executor.execute.assert_called_once()
++     
++     # Assert that no job was registered
++     run_job_action.job_history.register_job.assert_not_called()
++     
++     # Assert that the response contains the error from the tool
++     assert job_id is None
++     assert "Execution result: sbatch: error: Invalid project account" in response
+  
+```
+
+</details>
+
+---
+
+Now I will move on to the `JobHistory` component. I will add a test for **handling a corrupted history file** to `tests/test_job_history.py`. This test will ensure that if `history.json` contains invalid data, the `JobHistory` class will start with a clean slate instead of crashing.
+
+---
+
+<details><summary>Edit file: tests/test_job_history.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 40, lines removed: undefined
+
+```diff
+@@ -94,3 +94,43 @@
+      # 3. Assert that the second instance has loaded the state of the first.
+      assert history2.get_status(job_id) == "PENDING"
++ 
++ def test_history_loads_from_existing_file(tmp_path):
++     """
++     Tests that the JobHistory component can save its state to a file
++     and load it back upon re-initialization.
++     """
++     history_file = tmp_path / "history.json"
++     job_id = "mock_123"
++ 
++     # 1. Create the first instance, register a job, and it should save.
++     history1 = JobHistory(history_file_path=str(history_file))
++     history1.register_job(job_id, "/tmp/mock_dir")
++ 
++     # Verify the file was written
++     assert history_file.is_file()
++ 
++     # 2. Create a second instance pointing to the same file.
++     history2 = JobHistory(history_file_path=str(history_file))
++     
++     # 3. Assert that the second instance has loaded the state of the first.
++     assert history2.get_status(job_id) == "PENDING"
++ 
++ def test_history_handles_corrupted_file_gracefully(tmp_path):
++     """
++     Tests that if the history file is corrupted or not valid JSON,
++     the JobHistory instance initializes with an empty state.
++     """
++     # 1. Setup
++     history_file = tmp_path / "history.json"
++     with open(history_file, "w") as f:
++         f.write("this is not valid json")
++ 
++     # 2. Act
++     history = JobHistory(history_file_path=str(history_file))
++ 
++     # 3. Assert
++     assert history.get_all_jobs() == {}
++     # Verify we can still add a new job
++     history.register_job("123", "/tmp/dir")
++     assert "123" in history.get_all_jobs()
+  
+```
+
+</details>
+
+---
+
+Finally, I will add a test for **handling a missing output file** during result parsing to `tests/test_job_history.py`. This test will ensure that if a job is marked as `COMPLETED`, but its expected output file does not exist, the result is gracefully handled as `None`.
+
+---
+
+<details><summary>Edit file: tests/test_job_history.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 26, lines removed: undefined
+
+```diff
+@@ -134,3 +134,29 @@
+      history.register_job("123", "/tmp/dir")
+      assert "123" in history.get_all_jobs()
++ 
++ def test_parse_job_output_handles_missing_file(tracker, tmp_path):
++     """
++     Tests that if a job is completed but its output file is missing,
++     the result is gracefully set to None.
++     """
++     # 1. Setup
++     job_id = "12345"
++     job_dir = tmp_path / "job_dir"
++     job_dir.mkdir()
++     
++     output_parser_info = {
++         "file": "output/results.txt",
++         "parser_regex": "Value: (\\d+)"
++     }
++     
++     tracker.register_job(job_id, str(job_dir), output_parser_info=output_parser_info)
++     
++     # The output file output/results.txt is *not* created.
++     
++     # 2. Act
++     tracker.set_status(job_id, "COMPLETED")
++     
++     # 3. Assert
++     assert tracker.get_result(job_id) is None
++     assert tracker.get_status(job_id) == "COMPLETED"
+  
+```
+
+</details>
+
+---
+
+I have now added all the recommended tests to cover the identified gaps.
+
+I will run the full test suite with coverage reporting again. We should see a significant improvement in our coverage metrics, particularly for `actions.py` and `job_history.py`, and this will confirm that our new tests are working correctly.
+
+---
+
+```bash
+/Users/mcawood/dev/JobSherpa/.venv/bin/pytest --cov=jobsherpa --cov-report=term-missing
+```
+
+```
+
+========================================================== test session starts ==========================================================
+platform darwin -- Python 3.13.3, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/mcawood/dev/JobSherpa
+configfile: pyproject.toml
+plugins: anyio-4.10.0, cov-6.2.1, typeguard-4.4.4
+collected 28 items                                                                                                                      
+
+tests/test_actions.py ...F                                                                                                        [ 14%]
+tests/test_agent.py ..                                                                                                            [ 21%]
+tests/test_cli.py .....                                                                                                           [ 39%]
+tests/test_conversation_manager.py ..                                                                                             [ 46%]
+tests/test_intent_classifier.py ...                                                                                               [ 57%]
+tests/test_job_history.py ......F.                                                                                                [ 85%]
+tests/test_tool_executor.py .                                                                                                     [ 89%]
+tests/test_workspace_manager.py ...                                                                                               [100%]
+
+=============================================================== FAILURES ================================================================
+__________________________________________ test_run_job_action_handles_job_submission_failure ___________________________________________
+
+run_job_action = <jobsherpa.agent.actions.RunJobAction object at 0x13bc24b00>
+tmp_path = PosixPath('/private/var/folders/r4/c2kvh3zs7230vndy5xy0rkg40000gp/T/pytest-of-mcawood/pytest-40/test_run_job_action_handles_jo
+0')
+
+
+    def test_run_job_action_handles_job_submission_failure(run_job_action, tmp_path):
+        """
+        Tests that the action handles the case where the tool executor
+        does not return a valid job ID string.
+        """
+        # 1. Setup
+        job_uuid = uuid.uuid4()
+        job_dir = tmp_path / str(job_uuid)
+        mock_job_workspace = JobWorkspace(
+            job_dir=job_dir, output_dir=job_dir / "output", slurm_dir=job_dir / "slurm", script_path=job_dir / "job_script.sh"
+        )
+        mock_template = MagicMock()
+        mock_template.render.return_value = "script content"
+    
+        run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE)]}
+        run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
+        # Simulate a failed submission (e.g., sbatch returns an error)
+        run_job_action.tool_executor.execute.return_value = "sbatch: error: Invalid project account"
+    
+        # 2. Act
+        with patch("jinja2.Environment.get_template", return_value=mock_template), \
+             patch("builtins.open", mock_open()):
+            response, job_id = run_job_action.run("prompt")
+    
+        # 3. Assert
+        # Assert that the submission was attempted
+>       run_job_action.tool_executor.execute.assert_called_once()
+
+tests/test_actions.py:157: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <MagicMock name='mock.execute' id='5297816640'>
+
+    def assert_called_once(self):
+        """assert that the mock was called only once.
+        """
+        if not self.call_count == 1:
+            msg = ("Expected '%s' to have been called once. Called %s times.%s"
+                   % (self._mock_name or 'mock',
+                      self.call_count,
+                      self._calls_repr()))
+>           raise AssertionError(msg)
+E           AssertionError: Expected 'execute' to have been called once. Called 0 times.
+
+/opt/homebrew/Cellar/python@3.13/3.13.3_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/unittest/mock.py:958: AssertionError
+---------------------------------------------------------- Captured log setup -----------------------------------------------------------
+WARNING  jobsherpa.agent.actions:actions.py:162 Applications directory not found for RAG indexing: kb/applications
+----------------------------------------------------------- Captured log call -----------------------------------------------------------
+ERROR    jobsherpa.agent.actions:actions.py:72 Missing required job parameters for system 'mock_slurm': some_other_thing
+____________________________________________ test_history_handles_corrupted_file_gracefully _____________________________________________
+
+tmp_path = PosixPath('/private/var/folders/r4/c2kvh3zs7230vndy5xy0rkg40000gp/T/pytest-of-mcawood/pytest-40/test_history_handles_corrupted
+0')
+
+
+    def test_history_handles_corrupted_file_gracefully(tmp_path):
+        """
+        Tests that if the history file is corrupted or not valid JSON,
+        the JobHistory instance initializes with an empty state.
+        """
+        # 1. Setup
+        history_file = tmp_path / "history.json"
+        with open(history_file, "w") as f:
+            f.write("this is not valid json")
+    
+        # 2. Act
+        history = JobHistory(history_file_path=str(history_file))
+    
+        # 3. Assert
+>       assert history.get_all_jobs() == {}
+               ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'JobHistory' object has no attribute 'get_all_jobs'
+
+/Users/mcawood/dev/JobSherpa/tests/test_job_history.py:132: AttributeError
+----------------------------------------------------------- Captured log call -----------------------------------------------------------
+ERROR    jobsherpa.agent.job_history:job_history.py:31 Failed to load job history file: Expecting value: line 1 column 1 (char 0)
+=========================================================== warnings summary ============================================================
+.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12
+  /Users/mcawood/dev/JobSherpa/.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12: UserWarning: pkg_resources is deprecated a
+s an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-1
+1-30. Refrain from using this package or pin to Setuptools<81.
+
+    import pkg_resources
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================================================ tests coverage =============================================================
+___________________________________________ coverage: platform darwin, python 3.13.3-final-0 ____________________________________________
+
+Name                                      Stmts   Miss  Cover   Missing
+-----------------------------------------------------------------------
+jobsherpa/__init__.py                         0      0   100%
+jobsherpa/agent/__init__.py                   0      0   100%
+jobsherpa/agent/actions.py                  126     15    88%   48-49, 58, 79-84, 121-126, 131, 189, 204
+jobsherpa/agent/agent.py                    118     52    56%   41, 45, 59, 94-95, 99, 103-104, 108, 112-122, 127, 134, 140, 146, 150-174
+, 178-182, 186-189, 200
+
+jobsherpa/agent/conversation_manager.py      12      1    92%   26
+jobsherpa/agent/intent_classifier.py         11      0   100%
+jobsherpa/agent/job_history.py              136     34    75%   41-42, 86, 94-95, 103-112, 115-116, 130, 142-144, 156-157, 187-189, 193-1
+95, 199-203, 207-211
+
+jobsherpa/agent/tool_executor.py             27      8    70%   25, 32, 44-52
+jobsherpa/agent/workspace_manager.py         21      0   100%
+jobsherpa/cli/__init__.py                     0      0   100%
+jobsherpa/cli/main.py                        70     11    84%   39-40, 62-63, 73-74, 126, 128, 149, 152, 155
+-----------------------------------------------------------------------
+TOTAL                                       521    121    77%
+======================================================== short test summary info ========================================================
+FAILED tests/test_actions.py::test_run_job_action_handles_job_submission_failure - AssertionError: Expected 'execute' to have been called
+ once. Called 0 times.
+
+FAILED tests/test_job_history.py::test_history_handles_corrupted_file_gracefully - AttributeError: 'JobHistory' object has no attribute '
+get_all_jobs'
+
+================================================ 2 failed, 26 passed, 1 warning in 4.02s ================================================
+```
+
+---
+
+Of course. It seems I introduced two new errors.
+
+1.  **`test_actions.py` Failure:** The test `test_run_job_action_handles_job_submission_failure` is failing because the `run_job_action` fixture has a system requirement (`some_other_thing`) that isn't met, so the `execute` method is never called. This is a state leakage issue from the other test. I need to reset the `job_requirements` for each test.
+2.  **`test_job_history.py` Failure:** The test is failing because I used a non-existent method `get_all_jobs`. I should be using the internal `_jobs` dictionary for this test assertion. Also, my new test `test_parse_job_output_handles_missing_file` is using the wrong fixture name (`tracker` instead of `job_history`).
+
+I will fix these issues now. First, the actions test.
+
+---
+
+<details><summary>Edit file: tests/test_actions.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 6, lines removed: 1
+
+```diff
+@@ -20,5 +20,10 @@
+  def run_job_action(tmp_path):
+      """Fixture to create a RunJobAction instance with mocked dependencies."""
+-     MOCK_USER_CONFIG["defaults"]["workspace"] = str(tmp_path)
++     # Reset the system config to a clean state for each test
++     system_config = {
++         "name": "mock_slurm",
++         "commands": {"submit": "sbatch"},
++         "job_requirements": ["partition", "allocation"]
++     }
+      
+      mock_history = MagicMock()
+```
+
+**Chunk 2**
+Lines added: 1, lines removed: 1
+
+```diff
+@@ -32,5 +37,5 @@
+          knowledge_base_dir="kb",
+          user_config=MOCK_USER_CONFIG,
+-         system_config=MOCK_SYSTEM_CONFIG,
++         system_config=system_config,
+      )
+      # Replace the real RAG pipeline with a mock for targeted testing
+```
+
+**Chunk 3**
+Lines added: 3, lines removed: undefined
+
+```diff
+@@ -135,4 +140,7 @@
+      """
+      # 1. Setup
++     # This test should not be affected by state from other tests
++     assert "some_other_thing" not in run_job_action.system_config["job_requirements"]
++     
+      job_uuid = uuid.uuid4()
+      job_dir = tmp_path / str(job_uuid)
+```
+
+</details>
+
+---
+
+Now I will fix the two issues in `tests/test_job_history.py`. I will correct the fixture name and use the internal `_jobs` property for the assertion.
+
+---
+
+<details><summary>Edit file: tests/test_job_history.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 10, lines removed: 10
+
+```diff
+@@ -7,33 +7,33 @@
+  
+  @pytest.fixture
+- def tracker():
++ def job_history():
+      return JobHistory()
+  
+- def test_register_and_get_status(tracker):
++ def test_register_and_get_status(job_history):
+      """
+      Tests that a job can be registered with the tracker and
+      its initial status is 'PENDING'.
+      """
+      job_id = "mock_12345"
+-     tracker.register_job(job_id, "/tmp/mock_dir")
+-     assert tracker.get_status(job_id) == "PENDING"
++     job_history.register_job(job_id, "/tmp/mock_dir")
++     assert job_history.get_status(job_id) == "PENDING"
+  
+  
+- def test_update_status(tracker):
++ def test_update_status(job_history):
+      """
+      Tests that a job's status can be updated.
+      """
+      job_id = "mock_12345"
+-     tracker.register_job(job_id, "/tmp/mock_dir")
+-     tracker.set_status(job_id, "RUNNING")
+-     assert tracker.get_status(job_id) == "RUNNING"
++     job_history.register_job(job_id, "/tmp/mock_dir")
++     job_history.set_status(job_id, "RUNNING")
++     assert job_history.get_status(job_id) == "RUNNING"
+  
+  
+- def test_update_from_squeue_output(tracker):
++ def test_update_from_squeue_output(job_history):
+      """
+      Tests that the tracker can parse squeue output to update job status.
+      """
+      job_id = "12345"
+-     tracker.register_job(job_id, "/tmp/mock_dir")
++     job_history.register_job(job_id, "/tmp/mock_dir")
+  
+      mock_squeue_running = MagicMock()
+```
+
+**Chunk 2**
+Lines added: 5, lines removed: 5
+
+```diff
+@@ -44,16 +44,16 @@
+      
+      with patch("subprocess.run", return_value=mock_squeue_running) as mock_subprocess:
+-         tracker.check_and_update_statuses()
++         job_history.check_and_update_statuses()
+          mock_subprocess.assert_called_with(["squeue", "--job", job_id], capture_output=True, text=True)
+-         assert tracker.get_status(job_id) == "RUNNING"
++         assert job_history.get_status(job_id) == "RUNNING"
+  
+- def test_update_from_sacct_output_completed(tracker):
++ def test_update_from_sacct_output_completed(job_history):
+      """
+      Tests that the tracker calls sacct when a job is not in squeue
+      and correctly parses the 'COMPLETED' status.
+      """
+      job_id = "12345"
+-     tracker.register_job(job_id, "/tmp/mock_dir")
+-     tracker.set_status(job_id, "RUNNING") # Assume job was running
++     job_history.register_job(job_id, "/tmp/mock_dir")
++     job_history.set_status(job_id, "RUNNING") # Assume job was running
+  
+      mock_squeue_empty = MagicMock(stdout="") # squeue shows the job is done
+```
+
+**Chunk 3**
+Lines added: 1, lines removed: 1
+
+```diff
+@@ -64,5 +64,5 @@
+      # Mock squeue returning empty, then sacct returning COMPLETED
+      with patch("subprocess.run", side_effect=[mock_squeue_empty, mock_sacct_completed]) as mock_subprocess:
+-         tracker.check_and_update_statuses()
++         job_history.check_and_update_statuses()
+  
+          # Verify that sacct was called with the correct format
+```
+
+**Chunk 4**
+Lines added: 1, lines removed: 1
+
+```diff
+@@ -72,5 +72,5 @@
+          
+          # Verify the final status is COMPLETED
+-         assert tracker.get_status(job_id) == "COMPLETED"
++         assert job_history.get_status(job_id) == "COMPLETED"
+  
+  def test_history_persists_to_file(tmp_path):
+```
+
+**Chunk 5**
+Lines added: 3, lines removed: 3
+
+```diff
+@@ -130,10 +130,10 @@
+  
+      # 3. Assert
+-     assert history.get_all_jobs() == {}
++     assert history._jobs == {}
+      # Verify we can still add a new job
+      history.register_job("123", "/tmp/dir")
+-     assert "123" in history.get_all_jobs()
++     assert "123" in history._jobs
+  
+- def test_parse_job_output_handles_missing_file(tracker, tmp_path):
++ def test_parse_job_output_handles_missing_file(job_history, tmp_path):
+      """
+      Tests that if a job is completed but its output file is missing,
+```
+
+**Chunk 6**
+Lines added: 4, lines removed: 4
+
+```diff
+@@ -150,13 +150,13 @@
+      }
+      
+-     tracker.register_job(job_id, str(job_dir), output_parser_info=output_parser_info)
++     job_history.register_job(job_id, str(job_dir), output_parser_info=output_parser_info)
+      
+      # The output file output/results.txt is *not* created.
+      
+      # 2. Act
+-     tracker.set_status(job_id, "COMPLETED")
++     job_history.set_status(job_id, "COMPLETED")
+      
+      # 3. Assert
+-     assert tracker.get_result(job_id) is None
+-     assert tracker.get_status(job_id) == "COMPLETED"
++     assert job_history.get_result(job_id) is None
++     assert job_history.get_status(job_id) == "COMPLETED"
+  
+```
+
+</details>
+
+---
+
+All fixes are in. Let's run the coverage report one more time. This should be a fully green run, and we should see our coverage numbers improve significantly.
+
+---
+
+```bash
+/Users/mcawood/dev/JobSherpa/.venv/bin/pytest --cov=jobsherpa --cov-report=term-missing
+```
+
+```
+
+========================================================== test session starts ==========================================================
+platform darwin -- Python 3.13.3, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/mcawood/dev/JobSherpa
+configfile: pyproject.toml
+plugins: anyio-4.10.0, cov-6.2.1, typeguard-4.4.4
+collected 28 items                                                                                                                      
+
+tests/test_actions.py ....                                                                                                        [ 14%]
+tests/test_agent.py ..                                                                                                            [ 21%]
+tests/test_cli.py .....                                                                                                           [ 39%]
+tests/test_conversation_manager.py ..                                                                                             [ 46%]
+tests/test_intent_classifier.py ...                                                                                               [ 57%]
+tests/test_job_history.py ........                                                                                                [ 85%]
+tests/test_tool_executor.py .                                                                                                     [ 89%]
+tests/test_workspace_manager.py ...                                                                                               [100%]
+
+=========================================================== warnings summary ============================================================
+.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12
+  /Users/mcawood/dev/JobSherpa/.venv/lib/python3.13/site-packages/quantulum3/classifier.py:12: UserWarning: pkg_resources is deprecated a
+s an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-1
+1-30. Refrain from using this package or pin to Setuptools<81.
+
+    import pkg_resources
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================================================ tests coverage =============================================================
+___________________________________________ coverage: platform darwin, python 3.13.3-final-0 ____________________________________________
+
+Name                                      Stmts   Miss  Cover   Missing
+-----------------------------------------------------------------------
+jobsherpa/__init__.py                         0      0   100%
+jobsherpa/agent/__init__.py                   0      0   100%
+jobsherpa/agent/actions.py                  126     15    88%   48-49, 58, 79-84, 121-126, 131, 189, 204
+jobsherpa/agent/agent.py                    118     52    56%   41, 45, 59, 94-95, 99, 103-104, 108, 112-122, 127, 134, 140, 146, 150-174
+, 178-182, 186-189, 200
+
+jobsherpa/agent/conversation_manager.py      12      1    92%   26
+jobsherpa/agent/intent_classifier.py         11      0   100%
+jobsherpa/agent/job_history.py              136     34    75%   41-42, 86, 94-95, 103-112, 115-116, 130, 142-144, 156-157, 187-189, 193-1
+95, 199-203, 207-211
+
+jobsherpa/agent/tool_executor.py             27      8    70%   25, 32, 44-52
+jobsherpa/agent/workspace_manager.py         21      0   100%
+jobsherpa/cli/__init__.py                     0      0   100%
+jobsherpa/cli/main.py                        70     11    84%   39-40, 62-63, 73-74, 126, 128, 149, 152, 155
+-----------------------------------------------------------------------
+TOTAL                                       521    121    77%
+===================================================== 28 passed, 1 warning in 4.01s =====================================================
+```
+
+---
+
+Excellent! We have a fully green test suite, and our coverage has improved to 77%.
+
+The most important result is that `jobsherpa/agent/actions.py` is now at 88% and `jobsherpa/agent/job_history.py` is at 75%. We have successfully added tests for the critical edge cases we identified. The remaining "Missing" lines are in less critical areas, such as `__main__` guards, complex error logging paths, and some parts of the old agent code that we will eventually remove entirely.
+
+Our test suite is now significantly more robust. I am confident that our new architecture is not only well-designed but also well-tested.
+
+I will commit our improved test suite. After that, we can confidently move on to new features.
+
+---
+
+```bash
+git add . && git commit -m "test(coverage): Add tests for edge cases and failures" -m "Increases test coverage by adding tests for previously uncovered scenarios." -m "- Adds tests for non-templated jobs and job submission failures in RunJobAction." -m "- Adds tests for corrupted history files and missing output files in JobHistory." -m "- Raises overall test coverage from 72% to 77%."
+```
+
+```
+
+[main 1542e5c] test(coverage): Add tests for edge cases and failures
+ 5 files changed, 2693 insertions(+), 19 deletions(-)
+```
+
+---
+
+Our foundation is solid. We've addressed the test coverage, and the project is in a great state.
+
+Now, we can return to building new functionality. As I mentioned before, here are some potential next steps:
+
+1.  **Flesh out the `QueryHistoryAction`:** This is the most natural next step in making our agent conversational. We can implement the logic to parse user queries about past jobs (e.g., "what was the result of my last job?"), retrieve the information from `JobHistory`, and return a user-friendly response.
+2.  **Improve Conversational Onboarding:** Currently, if a user's profile is missing a required value like `allocation`, the agent fails with an error. We could begin building a conversational flow where the agent instead asks the user for the missing information and offers to save it to their profile.
+3.  **Tackle another item from the `DEVELOPMENT.md` vision.**
+
+I recommend **Option 1**. It directly follows our recent work on `JobHistory` and `IntentClassifier` and would be a satisfying and tangible step toward a truly useful conversational agent.
+
+What would you like to do?
+
+---
+
+_**User**_
+
+lets proceed with option 1. but first, will we add a corresponding CLI option for the history query? 
+
+---
+
+_**Assistant**_
+
+<think><details><summary>Thought Process</summary>
+**Evaluating Implementation Plans**
+
+I'm weighing the pros and cons of adding a dedicated CLI command, like `jobsherpa history <query>`, for the `QueryHistoryAction`. It seems the user is leaning that way. My primary concern is how this integrates with the existing architecture. This will affect how the new command is invoked. 
+
+
+**Reflecting on Design Choices**
+
+I'm now assessing the impact of the dual-command approach. It necessitates a decision regarding the core structure. Should we maintain the conversational model, or embrace a more command-centric paradigm? This has implications for user experience and the overall feel of the agent. My focus is on selecting the approach with the best balance of usability and architectural elegance.
+
+
+**Considering the Implications**
+
+I've revisited the single-command approach, pondering its limitations. The 'run' command feels less intuitive for querying history. A dedicated 'history' command offers clarity, aligning with common CLI conventions. This necessitates a trade-off: sacrificing the conversational elegance for a more explicit user experience. I'm leaning toward a design that ensures clarity and ease of use.
+
+
+**Evaluating Hybrid Solutions**
+
+I've been exploring a hybrid approach, keeping `jobsherpa run` but adding `jobsherpa history`. This offers choice, but deviates from the "conversational" goal in `DEVELOPMENT.md`. My focus is on balancing user experience with architectural purity. For now, I'm leaning towards the simpler `run` command to align with current project goals.
+
+
+**Analyzing Proposed Solutions**
+
+I've been considering the hybrid approach more in-depth, recognizing the user's preference for the `QueryHistoryAction`. While a dedicated command might offer clarity, it somewhat contradicts our goal. Therefore, I'm leaning towards retaining the single `run` command for now. This is to prioritize the conversational model outlined in `DEVELOPMENT.md`, aligning with our vision for a conversation-driven agent.
+
+
+**Prioritizing the Core Design**
+
+I'm reaffirming the need to concentrate on the conversational architecture as outlined in `DEVELOPMENT.md`. The user's question regarding a dedicated history command is valid. However, to keep the agent focused on the conversational model, I believe we should retain the single `run` command for the time being. This aligns with the core vision and architectural principles. I will advise them to proceed with the `QueryHistoryAction` using the single command.
+
+
+</details></think>
+
+---
+
+
+
+That's an excellent question. It touches on a core design decision for the entire tool: **should the user interface be a set of explicit commands, or should it be a single conversational entrypoint?**
+
+Here's a breakdown of the two approaches:
+
+### Approach A: Add a `jobsherpa history` command
+
+*   **How it would work:** We would add a new command to `jobsherpa/cli/main.py`. A user would run `jobsherpa history "what was the result of my last job?"`. This command would *bypass* the `IntentClassifier` and directly call the `QueryHistoryAction`.
+*   **Pros:**
+    *   **Very Clear:** The command is explicit and unambiguous. It follows standard CLI design patterns.
+    *   **Simple Logic:** It removes the need for the agent to guess the user's primary intent (running vs. querying).
+*   **Cons:**
+    *   **Less "Agent-like":** This moves us away from the vision of a single, intelligent, conversational agent that can figure out what you want from natural language. We would be building a multi-tool CLI rather than a unified agent.
+
+### Approach B: Use the existing `jobsherpa run` command (Current Design)
+
+*   **How it works:** The user runs `jobsherpa run "what was the result of my last job?"`. The `ConversationManager` receives the raw string, uses the `IntentClassifier` to determine the intent is `query_history`, and routes it to the `QueryHistoryAction`.
+*   **Pros:**
+    *   **Truly Conversational:** This aligns perfectly with our stated goal of building an AI agent. The user has one entry point—talking to the agent—and the agent handles the rest.
+    *   **Leverages Our New Architecture:** It makes full use of the `IntentClassifier` and `ConversationManager` we just built.
+*   **Cons:**
+    *   **"run" is an awkward name:** As you imply, telling the agent to "run" a query feels a bit strange.
+
+### Recommendation
+
+Given that our current goal is to "Implement Agentic Architecture for Conversation and Memory," I recommend we **stick with Approach B for now.**
+
+The core vision is to create an agent that understands natural language prompts. The best way to achieve this is to force all interactions through that single conversational entrypoint. It keeps the agent at the center of the design.
+
+We could consider renaming `jobsherpa run` to something more neutral like `jobsherpa ask` or `jobsherpa prompt` in the future, but for now, focusing the logic inside the agent rather than spreading it across multiple CLI commands will keep our architecture cleaner and more aligned with our long-term vision.
+
+Therefore, I propose we proceed with implementing the logic for `QueryHistoryAction`, which will be triggered by running prompts like `jobsherpa run "what was the result of my last job?"`.
+
+Does that sound good to you?
+
+---
+
+_**User**_
+
+great, lets implement it
+
+---
+
+_**Assistant**_
+
+<think><details><summary>Thought Process</summary>
+**Developing the Implementation**
+
+I'm currently focused on writing tests for the `QueryHistoryAction`. First things first, I'll flesh out `tests/test_actions.py`. Right now, I'm sketching out two test cases, one for querying the "last" job to get started. After that I will plan for other cases.
+
+
+**Outlining Test Cases**
+
+I've reviewed the existing test file's structure. Now I will start writing the test cases for `QueryHistoryAction`. The first test will query for the "last" job, followed by cases for a specific job ID, a non-existent job, and a running job. I will focus on edge cases.
+
+
+</details></think>
+
+---
+
+
+
+Excellent. Let's start implementing the `QueryHistoryAction`.
+
+As always, I will follow our TDD process, starting with the tests. I will add new tests to `tests/test_actions.py` that define the behavior of our history query logic.
+
+These tests will cover:
+1.  Querying for the most recent job using the keyword "last".
+2.  Querying for a specific job by its ID.
+3.  Handling a query for a job that doesn't exist.
+4.  Handling a query for a job that is still running and has no result yet.
+
+I'll begin by creating a new fixture for the `QueryHistoryAction` and then add the first test for querying the "last" job.
+
+---
+
+<details><summary>Edit file: tests/test_actions.py</summary>
+
+undefined
+
+**Chunk 1**
+Lines added: 1, lines removed: undefined
+
+```diff
+@@ -5,4 +5,5 @@
+  from jobsherpa.agent.actions import RunJobAction
+  from jobsherpa.agent.workspace_manager import JobWorkspace
++ from jobsherpa.agent.actions import QueryHistoryAction
+  
+  # A common set of mock configs for tests
+```
+
+**Chunk 2**
+Lines added: 6, lines removed: undefined
+
+```diff
+@@ -43,4 +44,10 @@
+      return action
+  
++ @pytest.fixture
++ def query_history_action():
++     """Fixture to create a QueryHistoryAction instance with a mocked JobHistory."""
++     mock_history = MagicMock()
++     return QueryHistoryAction(job_history=mock_history)
++ 
+  def test_run_job_action_renders_and_executes_template(run_job_action, tmp_path):
+      """
+```
+
+**Chunk 3**
+Lines added: 36, lines removed: undefined
+
+```diff
+@@ -171,3 +178,39 @@
+      assert job_id is None
+      assert "Execution result: sbatch: error: Invalid project account" in response
++ 
++ def test_query_history_action_gets_last_job_result(query_history_action):
++     """
++     Tests that the action can retrieve the result of the most recent job.
++     """
++     # 1. Setup
++     mock_history = query_history_action.job_history
++     mock_history.get_latest_job_id.return_value = "job_5"
++     mock_history.get_status.return_value = "COMPLETED"
++     mock_history.get_result.return_value = "42"
++     
++     # 2. Act
++     response = query_history_action.run("what was the result of my last job?")
++     
++     # 3. Assert
++     mock_history.get_latest_job_id.assert_called_once()
++     mock_history.get_status.assert_called_with("job_5")
++     mock_history.get_result.assert_called_with("job_5")
++     assert "The result of job job_5 (COMPLETED) is: 42" in response
++ 
++ def test_query_history_action_gets_job_by_id(query_history_action):
++     """
++     Tests that the action can retrieve the result of a specific job by its ID.
++     """
++     # 1. Setup
++     mock_history = query_history_action.job_history
++     mock_history.get_status.return_value = "COMPLETED"
++     mock_history.get_result.return_value = "Success"
++ 
++     # 2. Act
++     response = query_history_action.run("tell me about job 12345")
++ 
++     # 3. Assert
++     mock_history.get_status.assert_called_with("12345")
++     mock_history.get_result.assert_called_with("12345")
++     assert "The result of job 12345 (COMPLETED) is: Success" in response
+  
+```
+
+</details>
+
+---
+
+Now I will add the tests for the failure/edge cases: handling a job that is not found, and handling a job that is still running.
+
+---
+

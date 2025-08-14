@@ -4,6 +4,7 @@ import yaml
 import uuid
 from jobsherpa.agent.actions import RunJobAction
 from jobsherpa.agent.workspace_manager import JobWorkspace
+from jobsherpa.agent.actions import QueryHistoryAction
 
 # A common set of mock configs for tests
 MOCK_USER_CONFIG = {"defaults": {"workspace": "/tmp", "partition": "dev", "allocation": "abc-123", "system": "mock_slurm"}}
@@ -41,6 +42,12 @@ def run_job_action(tmp_path):
     # Replace the real RAG pipeline with a mock for targeted testing
     action.rag_pipeline = MagicMock()
     return action
+
+@pytest.fixture
+def query_history_action():
+    """Fixture to create a QueryHistoryAction instance with a mocked JobHistory."""
+    mock_history = MagicMock()
+    return QueryHistoryAction(job_history=mock_history)
 
 def test_run_job_action_renders_and_executes_template(run_job_action, tmp_path):
     """
@@ -170,3 +177,72 @@ def test_run_job_action_handles_job_submission_failure(run_job_action, tmp_path)
     # Assert that the response contains the error from the tool
     assert job_id is None
     assert "Execution result: sbatch: error: Invalid project account" in response
+
+def test_query_history_action_gets_last_job_result(query_history_action):
+    """
+    Tests that the action can retrieve the result of the most recent job.
+    """
+    # 1. Setup
+    mock_history = query_history_action.job_history
+    mock_history.get_latest_job_id.return_value = "job_5"
+    mock_history.get_status.return_value = "COMPLETED"
+    mock_history.get_result.return_value = "42"
+    
+    # 2. Act
+    response = query_history_action.run("what was the result of my last job?")
+    
+    # 3. Assert
+    mock_history.get_latest_job_id.assert_called_once()
+    mock_history.get_status.assert_called_with("job_5")
+    mock_history.get_result.assert_called_with("job_5")
+    assert "The result of job job_5 (COMPLETED) is: 42" in response
+
+def test_query_history_action_gets_job_by_id(query_history_action):
+    """
+    Tests that the action can retrieve the result of a specific job by its ID.
+    """
+    # 1. Setup
+    mock_history = query_history_action.job_history
+    mock_history.get_status.return_value = "COMPLETED"
+    mock_history.get_result.return_value = "Success"
+
+    # 2. Act
+    response = query_history_action.run("tell me about job 12345")
+
+    # 3. Assert
+    mock_history.get_status.assert_called_with("12345")
+    mock_history.get_result.assert_called_with("12345")
+    assert "The result of job 12345 (COMPLETED) is: Success" in response
+
+def test_query_history_action_handles_job_not_found(query_history_action):
+    """
+    Tests that a user-friendly message is returned for a job ID that doesn't exist.
+    """
+    # 1. Setup
+    mock_history = query_history_action.job_history
+    mock_history.get_status.return_value = None
+
+    # 2. Act
+    response = query_history_action.run("tell me about job 99999")
+
+    # 3. Assert
+    mock_history.get_status.assert_called_with("99999")
+    mock_history.get_result.assert_not_called()
+    assert "Sorry, I couldn't find any information for job ID 99999." in response
+
+def test_query_history_action_handles_running_job(query_history_action):
+    """
+    Tests that a helpful message is returned for a job that is not yet complete.
+    """
+    # 1. Setup
+    mock_history = query_history_action.job_history
+    mock_history.get_status.return_value = "RUNNING"
+    mock_history.get_result.return_value = None
+
+    # 2. Act
+    response = query_history_action.run("what is the result of job 12345")
+
+    # 3. Assert
+    mock_history.get_status.assert_called_with("12345")
+    mock_history.get_result.assert_called_with("12345")
+    assert "Job 12345 is still RUNNING. The result is not yet available." in response
