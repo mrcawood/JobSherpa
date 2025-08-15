@@ -1,0 +1,7 @@
+name: slurm
+commands:
+  submit: sbatch
+  status: squeue
+  history: sacct
+  cancel: scancel
+

@@ -1,0 +1,9 @@
+name: TACC
+description: Texas Advanced Computing Center
+job_requirements:
+  - partition
+  - allocation
+module_init: []
+systems:
+  - frontera
+

@@ -21,6 +21,7 @@ from jobsherpa.kb.dataset_index import DatasetIndex
 from jobsherpa.kb.module_client import ModuleClient
 from jobsherpa.kb.system_index import SystemIndex
 from jobsherpa.kb.app_registry import AppRegistry
+from jobsherpa.kb.site_loader import load_site_profile
 
 
 logger = logging.getLogger(__name__)
@@ -67,10 +68,33 @@ class RunJobAction:
         # First, try to update the agent's configuration from the conversational context
         if context:
             if 'workspace' in context and not self.user_config.defaults.workspace:
-                workspace_path = context['workspace']
-                self.user_config.defaults.workspace = workspace_path
-                # The workspace manager was created with the old empty path, so we update it too
-                self.workspace_manager.base_path = Path(workspace_path)
+                # Normalize and validate workspace: expand env vars and ~, ensure exists & writable
+                raw_path = context['workspace'].strip()
+                expanded_path = os.path.expandvars(os.path.expanduser(raw_path))
+                # Detect unresolved environment variables
+                if ('$' in raw_path) and (expanded_path == raw_path or '$' in expanded_path):
+                    return ActionResult(
+                        message=(
+                            f"I can't resolve environment variables in '{raw_path}'. "
+                            f"Please provide a concrete path (e.g., /scratch/you/workspace)."
+                        ),
+                        is_waiting=True,
+                        param_needed='workspace'
+                    )
+                try:
+                    os.makedirs(expanded_path, exist_ok=True)
+                except Exception as e:
+                    return ActionResult(
+                        message=(
+                            f"I couldn't create or access the workspace '{raw_path}' (expanded to '{expanded_path}'). "
+                            f"Please provide a writable path."
+                        ),
+                        is_waiting=True,
+                        param_needed="workspace",
+                    )
+                # Update config and manager
+                self.user_config.defaults.workspace = expanded_path
+                self.workspace_manager.base_path = Path(expanded_path)
                 
             if 'system' in context and not self.system_config:
                 system_name = context['system']
@@ -80,7 +104,16 @@ class RunJobAction:
                         self.system_config = yaml.safe_load(f)
                     self.user_config.defaults.system = system_name
                 else:
-                    return f"I can't find a system profile named '{system_name}'. What system should I use?", None, True, "system"
+                    return ActionResult(
+                        message=f"I can't find a system profile named '{system_name}'. What system should I use?",
+                        is_waiting=True,
+                        param_needed="system",
+                    )
+
+        # Site profile (optional) for org-level defaults
+        # Try to infer site via system name against site listings (optional)
+        site_profile = None
+        # We could scan known sites and see if current system appears; keep optional for now
 
         # Now, with potentially updated configs, perform the validation checks
         if not self.user_config.defaults.workspace:
@@ -106,8 +139,11 @@ class RunJobAction:
                 except Exception:
                     pass
             else:
+                # List available systems for convenience
+                available = sorted(self.system_index._name_to_profile.keys())  # type: ignore[attr-defined]
+                choices = f" Available systems: {', '.join(available)}." if available else ""
                 return ActionResult(
-                    message="I need a system profile to run this job. What system should I use?",
+                    message="I need a system profile to run this job. What system should I use?" + choices,
                     is_waiting=True,
                     param_needed="system",
                 )
@@ -215,7 +251,9 @@ class RunJobAction:
             # --- 2. Validate Final Context ---
             missing_or_empty_params = []
             # We now require job_name as a standard parameter
-            required_params = self.system_config.get("job_requirements", []) + ["job_name"]
+            site_requirements = site_profile.job_requirements if site_profile else []
+            system_requirements = self.system_config.get("job_requirements", [])
+            required_params = list(dict.fromkeys(site_requirements + system_requirements + ["job_name"]))
             for param in required_params:
                 if param not in template_context or not template_context.get(param):
                     missing_or_empty_params.append(param)

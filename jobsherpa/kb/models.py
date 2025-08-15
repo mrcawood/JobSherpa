@@ -14,12 +14,18 @@ class SystemProfile(BaseModel):
     name: str
     scheduler: Literal["slurm"]
     description: Optional[str] = None
-    commands: SystemCommands
+    commands: Optional[SystemCommands] = None
     job_requirements: List[str] = Field(default_factory=list)
     available_partitions: List[str] = Field(default_factory=list)
     module_init: List[str] = Field(default_factory=list)  # commands to prep module environment
     filesystem_roots: Dict[str, str] = Field(default_factory=dict)  # e.g., {scratch: "/scratch", work: "/work"}
     apps: Dict[str, Dict[str, str]] = Field(default_factory=dict)  # optional per-app bindings (e.g., {wrf: {module: ..., exe_path: ...}})
+    launcher: Optional[str] = None  # system-preferred launcher (e.g., ibrun)
+
+
+class SchedulerProfile(BaseModel):
+    name: str
+    commands: SystemCommands
 
 
 class OutputParser(BaseModel):
@@ -50,5 +56,13 @@ class DatasetProfile(BaseModel):
     staging: Optional[StagingSpec] = None
     pre_run_edits: List[str] = Field(default_factory=list)  # e.g., sed commands
     resource_hints: Dict[str, Any] = Field(default_factory=dict)  # e.g., {nodes: 4, time: "02:00:00"}
+
+
+class SiteProfile(BaseModel):
+    name: str
+    description: Optional[str] = None
+    job_requirements: List[str] = Field(default_factory=list)
+    module_init: List[str] = Field(default_factory=list)
+    systems: List[str] = Field(default_factory=list)
 
 

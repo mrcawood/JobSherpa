@@ -49,4 +49,10 @@ class ToolExecutor:
             return f"Error executing tool: {e}"
         except FileNotFoundError as e:
             logger.error("Error executing tool '%s'. File not found.", " ".join(command))
+            # Friendly message when scheduler CLI is missing locally
+            if command and command[0] in {"sbatch", "squeue", "sacct", "scancel"}:
+                return (
+                    f"Scheduler command '{command[0]}' not found on this host. "
+                    f"Run this job on your HPC login node or use --dry-run locally."
+                )
             return f"Error executing tool: {e}"

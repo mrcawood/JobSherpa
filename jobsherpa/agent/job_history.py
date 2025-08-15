@@ -17,6 +17,7 @@ class JobHistory:
     def __init__(self, history_file_path: Optional[str] = None, scheduler_client: Optional[SchedulerClient] = None):
         self.history_file_path = history_file_path
         self._jobs = self._load_state()
+        # Use provided scheduler client or default to Slurm
         self.scheduler_client = scheduler_client or SlurmSchedulerClient()
 
     def _load_state(self) -> dict:

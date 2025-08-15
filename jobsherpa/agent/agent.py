@@ -49,8 +49,15 @@ class JobSherpaAgent:
                 user_config = UserConfig(defaults=UserConfigDefaults(workspace="", system=""))
                 profile_path = None # No path, so don't offer to save later
             else:
-                user_config_manager = ConfigManager(config_path=profile_path)
-                user_config = user_config_manager.load()
+                # Attempt to load; if invalid or missing required fields, fall back gracefully
+                try:
+                    user_config_manager = ConfigManager(config_path=profile_path)
+                    user_config = user_config_manager.load()
+                except Exception as e:
+                    from jobsherpa.config import UserConfig, UserConfigDefaults
+                    logger.warning("Failed to load user profile at %s (%s). Starting with empty configuration.", profile_path, e)
+                    user_config = UserConfig(defaults=UserConfigDefaults(workspace="", system=""))
+                    # Keep profile_path so we can offer to save later into the same file
         
         self.workspace = user_config.defaults.workspace
         history_dir = os.path.join(self.workspace, ".jobsherpa") if self.workspace else os.path.join(os.getcwd(), ".jobsherpa")
