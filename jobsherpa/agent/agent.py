@@ -17,7 +17,6 @@ from haystack import Pipeline
 from haystack import Document
 from jobsherpa.agent.config_manager import ConfigManager
 from jobsherpa.config import UserConfig
-from jobsherpa.kb.scheduler_loader import load_scheduler_profile
 
 logger = logging.getLogger(__name__)
 
@@ -72,17 +71,6 @@ class JobSherpaAgent:
             system_config_path = os.path.join(knowledge_base_dir, "system", f"{effective_system_profile}.yaml")
             with open(system_config_path, 'r') as f:
                 system_config = yaml.safe_load(f)
-            # Always source scheduler command mappings from the scheduler KB, not the system profile.
-            # This ensures a single source of truth for submit/status/history, etc.
-            if isinstance(system_config, dict):
-                scheduler_name = system_config.get("scheduler")
-                if scheduler_name:
-                    sched_profile = load_scheduler_profile(scheduler_name, base_dir=knowledge_base_dir)
-                    if sched_profile and getattr(sched_profile, "commands", None):
-                        try:
-                            system_config["commands"] = sched_profile.commands.model_dump(exclude_none=True)  # type: ignore[attr-defined]
-                        except AttributeError:
-                            system_config["commands"] = sched_profile.commands.dict(exclude_none=True)  # type: ignore[attr-defined]
 
         # --- 2. Initialize Components ---
         tool_executor = ToolExecutor(dry_run=dry_run)

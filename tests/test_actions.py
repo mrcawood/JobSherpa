@@ -10,7 +10,7 @@ from pathlib import Path
 
 # A common set of mock configs for tests
 MOCK_USER_CONFIG = {"defaults": {"workspace": "/tmp", "partition": "dev", "allocation": "abc-123", "system": "mock_slurm"}}
-MOCK_SYSTEM_CONFIG = {"name": "mock_slurm", "commands": {"submit": "sbatch"}, "job_requirements": ["partition", "allocation"]}
+MOCK_SYSTEM_CONFIG = {"name": "mock_slurm", "scheduler": "slurm", "job_requirements": ["partition", "allocation"]}
 MOCK_RECIPE = {
     "name": "random_number",
     "template": "random_number.sh.j2",
@@ -60,6 +60,17 @@ def run_job_action(mocker, tmp_path):
     # Replace recipe index with a MagicMock so tests can control selection
     action.recipe_index = MagicMock()
     action.recipe_index.find_best = MagicMock()
+    # Provide a scheduler KB file under tmp_path so command resolution works in tests
+    sched_dir = tmp_path / "schedulers"
+    sched_dir.mkdir(exist_ok=True)
+    (sched_dir / "slurm.yaml").write_text("""
+name: slurm
+commands:
+  submit: sbatch
+  status: squeue
+  history: sacct
+  cancel: scancel
+""".strip())
     return action
 
 @pytest.fixture

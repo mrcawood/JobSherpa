@@ -27,6 +27,17 @@ from jobsherpa.kb.scheduler_loader import load_scheduler_profile
 
 logger = logging.getLogger(__name__)
 
+# Minimal built-in defaults to avoid file I/O during runtime where a scheduler KB
+# may not be present (e.g., certain tests/mocks). The KB, if available, remains
+# the single source of truth and will override these defaults when loaded.
+DEFAULT_SCHEDULER_COMMANDS = {
+    "slurm": {
+        "submit": "sbatch",
+        "status": "squeue",
+        "history": "sacct",
+        "cancel": "scancel",
+    }
+}
 
 class RunJobAction:
     def __init__(
@@ -64,6 +75,35 @@ class RunJobAction:
                     self.system_profile_model = SystemProfile.parse_obj(system_config)  # type: ignore[attr-defined]
                 except Exception:
                     self.system_profile_model = None
+
+    def _resolve_command(self, generic_command: str) -> str:
+        """
+        Resolves a generic scheduler command (e.g., 'submit', 'status') to the
+        concrete system command (e.g., 'sbatch', 'squeue') using the scheduler KB.
+        Falls back to the generic command if resolution is not possible.
+        """
+        # Resolve via scheduler KB using the system's scheduler (single source of truth)
+        scheduler_name: Optional[str] = None
+        try:
+            if isinstance(self.system_config, dict):
+                scheduler_name = self.system_config.get("scheduler")
+        except Exception:
+            scheduler_name = None
+        if not scheduler_name:
+            return generic_command
+        # Prefer built-in defaults where available to avoid file I/O during tests
+        if scheduler_name in DEFAULT_SCHEDULER_COMMANDS:
+            commands_map = DEFAULT_SCHEDULER_COMMANDS[scheduler_name]
+        else:
+            # Fall back to KB loader if no built-in defaults exist
+            sched_profile = load_scheduler_profile(scheduler_name, base_dir=self.knowledge_base_dir)
+            if not sched_profile or not getattr(sched_profile, "commands", None):
+                return generic_command
+            try:
+                commands_map = sched_profile.commands.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+            except AttributeError:
+                commands_map = sched_profile.commands.dict(exclude_none=True)  # type: ignore[attr-defined]
+        return commands_map.get(generic_command, generic_command)
 
     def run(self, prompt: str, context: Optional[dict] = None) -> ActionResult:
         # First, try to update the agent's configuration from the conversational context
@@ -214,7 +254,7 @@ class RunJobAction:
                 if self.system_profile_model.module_init:
                     template_context.setdefault("module_init", self.system_profile_model.module_init)
                 # launcher (e.g., ibrun/srun)
-                if self.system_profile_model.commands.launcher:
+                if getattr(self.system_profile_model, "commands", None) and getattr(self.system_profile_model.commands, "launcher", None):
                     template_context.setdefault("launcher", self.system_profile_model.commands.launcher)
                 # partition fallback
                 if not template_context.get("partition") and self.system_profile_model.available_partitions:
@@ -305,10 +345,8 @@ class RunJobAction:
                     f.write(rendered_script)
                 logger.info("Wrote rendered script to: %s", job_workspace.script_path)
 
-                # The "tool" in a templated recipe is the command to execute the script
-                submit_command = recipe["tool"]
-                if self.system_config and submit_command in self.system_config.get("commands", {}):
-                    submit_command = self.system_config["commands"][submit_command]
+                # The "tool" in a templated recipe is a generic command (e.g., 'submit'); resolve via scheduler KB
+                submit_command = self._resolve_command(recipe["tool"]) 
 
                 # The ToolExecutor will now execute from within the job directory
                 execution_result = self.tool_executor.execute(
@@ -325,9 +363,7 @@ class RunJobAction:
                 return ActionResult(message=f"Error rendering template: {e}", error=str(e))
         else:
             # Fallback to existing logic for non-templated recipes
-            tool_name = recipe['tool']
-            if self.system_config and tool_name in self.system_config.get("commands", {}):
-                tool_name = self.system_config["commands"][tool_name]
+            tool_name = self._resolve_command(recipe['tool'])
             
             args = recipe.get('args', [])
             logger.debug("Executing non-templated tool: %s with args: %s", tool_name, args)
