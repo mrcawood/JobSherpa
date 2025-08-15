@@ -1,0 +1,13 @@
+{% macro dataset_prep(dataset_path=None, staging_steps=[], pre_run_edits=[]) -%}
+{%- if dataset_path %}
+cd {{ dataset_path }}
+{%- endif %}
+{%- for step in staging_steps %}
+{{ step }}
+{%- endfor %}
+{%- for edit in pre_run_edits %}
+{{ edit }}
+{%- endfor %}
+{%- endmacro %}
+
+

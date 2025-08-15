@@ -2,12 +2,14 @@
 
 {% import 'blocks/slurm_header.j2' as slurm %}
 {% import 'blocks/modules.j2' as blocks %}
+{% import 'blocks/dataset.j2' as ds %}
 
 {{ slurm.slurm_header(job_name, partition, allocation, nodes, ntasks_per_node, time) }}
 
 {{ blocks.module_setup(module_init or [], module_loads or []) }}
 
 cd {{ job_dir }}
+{{ ds.dataset_prep(dataset_path, staging_steps or [], pre_run_edits or []) }}
 {{ launcher or "srun" }} {{ wrf_exe or "wrf.exe" }}
 
 

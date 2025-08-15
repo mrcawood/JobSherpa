@@ -28,6 +28,9 @@ def test_wrf_script_renders_header_and_launcher(tmp_path):
         "launcher": sys.commands.launcher or "srun",
         "wrf_exe": "wrf.exe",
         "job_dir": str(job_dir),
+        "dataset_path": ds.locations.get("Frontera"),
+        "staging_steps": ds.staging.steps if ds.staging else [],
+        "pre_run_edits": ds.pre_run_edits,
     }
 
     env = Environment(loader=FileSystemLoader(str(repo_root / "tools")))
@@ -37,5 +40,11 @@ def test_wrf_script_renders_header_and_launcher(tmp_path):
     assert "#SBATCH --partition" in rendered
     assert "#SBATCH --nodes=1" in rendered
     assert "ibrun" in rendered or "srun" in rendered
+    # Dataset steps present
+    if ds.staging:
+        for step in ds.staging.steps:
+            assert step in rendered
+    for edit in ds.pre_run_edits:
+        assert edit in rendered
 
 
