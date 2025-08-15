@@ -7,10 +7,9 @@ from jobsherpa.config import UserConfig, UserConfigDefaults
 # The mock for the first argument to the test function should be the last decorator.
 @patch("builtins.open", new_callable=mock_open, read_data="name: test")
 @patch("yaml.safe_load")
-@patch("jobsherpa.agent.actions.RunJobAction._initialize_rag_pipeline")
 @patch("jobsherpa.agent.agent.ConversationManager")
 def test_agent_initialization_creates_conversation_manager(
-    mock_conversation_manager, mock_rag_init, mock_safe_load, mock_open
+    mock_conversation_manager, mock_safe_load, mock_open
 ):
     """
     Tests that the agent's __init__ method correctly instantiates
@@ -18,7 +17,7 @@ def test_agent_initialization_creates_conversation_manager(
     """
     mock_safe_load.return_value = {"name": "test_system"}
     # Avoid initializing heavy/opaque RAG index during this unit test
-    mock_rag_init.return_value = MagicMock()
+    # No RAG init in RunJobAction anymore
     mock_user_config = UserConfig(
         defaults=UserConfigDefaults(workspace="/tmp", system="test")
     )
@@ -32,10 +31,9 @@ def test_agent_initialization_creates_conversation_manager(
     assert "query_history_action" in call_kwargs
 
 @patch("builtins.open", new_callable=mock_open, read_data="name: test")
-@patch("jobsherpa.agent.actions.RunJobAction._initialize_rag_pipeline")
 @patch("jobsherpa.agent.agent.ConversationManager")
 def test_agent_run_delegates_to_conversation_manager(
-    mock_conversation_manager, mock_rag_init, mock_open
+    mock_conversation_manager, mock_open
 ):
     """
     Tests that the agent's run method is a simple pass-through
@@ -45,7 +43,7 @@ def test_agent_run_delegates_to_conversation_manager(
     # as it's part of the RunJobAction which is mocked by ConversationManager.
     # The ZeroDivisionError was from the other test.
     # The handle_prompt error was a decorator order issue.
-    mock_rag_init.return_value = MagicMock()
+    # No RAG init in RunJobAction anymore
     mock_user_config = UserConfig(
         defaults=UserConfigDefaults(workspace="/tmp", system="test")
     )
@@ -69,7 +67,7 @@ def test_agent_initialization_handles_missing_user_profile(mocker):
     """
     mocker.patch("os.path.exists", return_value=False)
     mock_safe_load = mocker.patch("yaml.safe_load")
-    mocker.patch("jobsherpa.agent.actions.RunJobAction._initialize_rag_pipeline")
+    # No RAG init in RunJobAction anymore
     
     # We don't provide a user_config_override, so the agent will try to load one.
     agent = JobSherpaAgent(user_profile="new_user")

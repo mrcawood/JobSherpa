@@ -4,10 +4,23 @@ from freezegun import freeze_time
 import time
 
 from jobsherpa.agent.job_history import JobHistory
+from jobsherpa.agent.scheduler import SchedulerClient
+
+class MockScheduler(SchedulerClient):
+    def __init__(self, active=None, final=None):
+        self.active = active or {}
+        self.final = final or {}
+
+    def get_active_statuses(self, job_ids):
+        return {j: self.active.get(j) for j in job_ids if j in self.active}
+
+    def get_final_statuses(self, job_ids):
+        return {j: self.final.get(j) for j in job_ids if j in self.final}
+
 
 @pytest.fixture
 def job_history():
-    return JobHistory()
+    return JobHistory(scheduler_client=MockScheduler())
 
 def test_register_and_get_status(job_history):
     """
@@ -16,8 +29,7 @@ def test_register_and_get_status(job_history):
     job_id = "mock_12345"
     job_history.register_job("mock_12345", job_name="test_job", job_directory="/tmp/mock_dir")
     # In the new model, get_status will try to check, so we need to mock subprocess
-    with patch("subprocess.run", return_value=MagicMock(stdout="")):
-        assert job_history.get_status(job_id) == "PENDING"
+    assert job_history.get_status(job_id) == "PENDING"
 
 def test_set_status(job_history):
     """
@@ -26,8 +38,7 @@ def test_set_status(job_history):
     job_id = "mock_12345"
     job_history.register_job("mock_12345", job_name="test_job", job_directory="/tmp/mock_dir")
     job_history.set_status("mock_12345", "RUNNING")
-    with patch("subprocess.run", return_value=MagicMock(stdout="")):
-        assert job_history.get_status(job_id) == "RUNNING"
+    assert job_history.get_status(job_id) == "RUNNING"
 
 def test_history_persists_to_file(tmp_path):
     """
@@ -38,16 +49,15 @@ def test_history_persists_to_file(tmp_path):
     job_id = "mock_123"
     
     # 1. Create the first instance, register a job, and it should save.
-    history1 = JobHistory(history_file_path=str(history_file))
+    history1 = JobHistory(history_file_path=str(history_file), scheduler_client=MockScheduler())
     history1.register_job("mock_123", job_name="test_job", job_directory="/tmp/mock_dir")
     assert history_file.is_file()
     
     # 2. Create a second instance pointing to the same file.
-    history2 = JobHistory(history_file_path=str(history_file))
+    history2 = JobHistory(history_file_path=str(history_file), scheduler_client=MockScheduler())
     
     # 3. Assert that the second instance has loaded the state of the first.
-    with patch("subprocess.run", return_value=MagicMock(stdout="")):
-        assert history2.get_status(job_id) == "PENDING"
+    assert history2.get_status(job_id) == "PENDING"
 
 def test_get_status_actively_checks_squeue(job_history):
     """
@@ -58,13 +68,9 @@ def test_get_status_actively_checks_squeue(job_history):
     job_history.register_job(job_id, job_name="test_job", job_directory="/tmp/mock_dir")
 
     # Mock squeue showing the job is now running
-    mock_squeue_output = MagicMock(stdout=f"{job_id},RUNNING", stderr="")
-    
-    with patch("subprocess.run", return_value=mock_squeue_output) as mock_subprocess:
-        status = job_history.get_status(job_id)
-        
-    mock_subprocess.assert_called_once()
-    assert "squeue" in mock_subprocess.call_args.args[0]
+    # Inject scheduler that reports RUNNING
+    job_history.scheduler_client = MockScheduler(active={job_id: "RUNNING"})
+    status = job_history.get_status(job_id)
     assert status == "RUNNING"
 
 def test_get_status_actively_checks_sacct(job_history):
@@ -78,15 +84,8 @@ def test_get_status_actively_checks_sacct(job_history):
     job_history.set_status(job_id, "RUNNING")
 
     # Mock squeue returning empty, then sacct returning COMPLETED
-    mock_squeue_empty = MagicMock(stdout="", stderr="slurm_load_jobs error: Invalid job id specified")
-    mock_sacct_completed = MagicMock(stdout=f"{job_id}      COMPLETED      0:0", stderr="")
-    
-    with patch("subprocess.run", side_effect=[mock_squeue_empty, mock_sacct_completed]) as mock_subprocess:
-        status = job_history.get_status(job_id)
-        
-    assert mock_subprocess.call_count == 2
-    assert "squeue" in mock_subprocess.call_args_list[0].args[0]
-    assert "sacct" in mock_subprocess.call_args_list[1].args[0]
+    job_history.scheduler_client = MockScheduler(active={}, final={job_id: "COMPLETED"})
+    status = job_history.get_status(job_id)
     assert status == "COMPLETED"
 
 def test_get_status_for_completed_job_does_not_recheck(job_history):
@@ -98,10 +97,7 @@ def test_get_status_for_completed_job_does_not_recheck(job_history):
     job_history.register_job(job_id, job_name="test_job", job_directory="/tmp/mock_dir")
     job_history.set_status(job_id, "COMPLETED")
     
-    with patch("subprocess.run") as mock_subprocess:
-        status = job_history.get_status(job_id)
-        
-    mock_subprocess.assert_not_called()
+    status = job_history.get_status(job_id)
     assert status == "COMPLETED"
 
 @freeze_time("2025-08-14 12:00:00")

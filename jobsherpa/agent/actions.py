@@ -14,6 +14,8 @@ from haystack import Pipeline
 from haystack.document_stores import InMemoryDocumentStore
 from haystack.nodes import BM25Retriever
 from haystack import Document
+from jobsherpa.agent.types import ActionResult
+from jobsherpa.agent.recipe_index import SimpleKeywordIndex
 
 
 logger = logging.getLogger(__name__)
@@ -35,9 +37,11 @@ class RunJobAction:
         self.knowledge_base_dir = knowledge_base_dir
         self.user_config = user_config
         self.system_config = system_config
-        self.rag_pipeline = self._initialize_rag_pipeline()
+        # Replace bespoke RAG plumbing with a RecipeIndex abstraction
+        self.recipe_index = SimpleKeywordIndex(knowledge_base_dir)
+        self.recipe_index.index()
 
-    def run(self, prompt: str, context: Optional[dict] = None) -> tuple[str, Optional[str], bool, Optional[str]]:
+    def run(self, prompt: str, context: Optional[dict] = None) -> ActionResult:
         # First, try to update the agent's configuration from the conversational context
         if context:
             if 'workspace' in context and not self.user_config.defaults.workspace:
@@ -58,18 +62,26 @@ class RunJobAction:
 
         # Now, with potentially updated configs, perform the validation checks
         if not self.user_config.defaults.workspace:
-            return "I need a workspace to run this job. What directory should I use?", None, True, "workspace"
+            return ActionResult(
+                message="I need a workspace to run this job. What directory should I use?",
+                is_waiting=True,
+                param_needed="workspace",
+            )
         
         if not self.system_config:
-            return "I need a system profile to run this job. What system should I use?", None, True, "system"
+            return ActionResult(
+                message="I need a system profile to run this job. What system should I use?",
+                is_waiting=True,
+                param_needed="system",
+            )
             
         logger.info("Agent received prompt: '%s'", prompt)
 
-        recipe = self._find_matching_recipe(prompt)
+        recipe = self.recipe_index.find_best(prompt)
 
         if not recipe:
             logger.warning("No matching recipe found for prompt.")
-            return "Sorry, I don't know how to handle that.", None, False, None
+            return ActionResult(message="Sorry, I don't know how to handle that.")
         
         logger.debug("Found matching recipe: %s", recipe["name"])
         
@@ -88,9 +100,9 @@ class RunJobAction:
                 if isinstance(self.user_config, UserConfig):
                     defaults_obj = self.user_config.defaults
                     try:
-                        defaults_dict = defaults_obj.model_dump(exclude_none=True)
+                        defaults_dict = defaults_obj.model_dump(exclude_none=True)  # v2
                     except AttributeError:
-                        defaults_dict = defaults_obj.dict(exclude_none=True)
+                        defaults_dict = defaults_obj.dict(exclude_none=True)  # v1
                     default_context.update(defaults_dict)
                 elif isinstance(self.user_config, dict) and "defaults" in self.user_config:
                     default_context.update(self.user_config["defaults"])
@@ -114,7 +126,7 @@ class RunJobAction:
                 # Ask for the first missing or empty parameter
                 param_needed = missing_or_empty_params[0]
                 question = f"I need a value for '{param_needed}'. What should I use?"
-                return question, None, True, param_needed
+                return ActionResult(message=question, is_waiting=True, param_needed=param_needed)
             
             # --- 3. Render and Submit ---
             logger.info("Rendering script from template: %s", recipe["template"])
@@ -160,10 +172,10 @@ class RunJobAction:
 
             except jinja2.TemplateNotFound:
                 logger.error("Template '%s' not found in tools directory.", recipe["template"])
-                return f"Error: Template '{recipe['template']}' not found.", None, False, None
+                return ActionResult(message=f"Error: Template '{recipe['template']}' not found.")
             except Exception as e:
                 logger.error("Error rendering template: %s", e, exc_info=True)
-                return f"Error rendering template: {e}", None, False, None
+                return ActionResult(message=f"Error rendering template: {e}", error=str(e))
         else:
             # Fallback to existing logic for non-templated recipes
             tool_name = recipe['tool']
@@ -201,47 +213,13 @@ class RunJobAction:
             )
             logger.info("Job %s submitted successfully.", slurm_job_id)
             response = f"Found recipe '{recipe['name']}'.\nJob submitted successfully with ID: {slurm_job_id}"
-            return response, slurm_job_id, False, None
+            return ActionResult(message=response, job_id=slurm_job_id, is_waiting=False)
 
         logger.info("Execution finished, but no job ID was parsed.")
         response = f"Found recipe '{recipe['name']}'.\nExecution result: {execution_result}"
-        return response, None, False, None
+        return ActionResult(message=response, is_waiting=False)
 
-    def _initialize_rag_pipeline(self) -> Pipeline:
-        """Initializes the Haystack RAG pipeline and indexes documents."""
-        document_store = InMemoryDocumentStore(use_bm25=True)
-        
-        # Index all application recipes
-        app_dir = os.path.join(self.knowledge_base_dir, "applications")
-        if not os.path.isdir(app_dir):
-            logger.warning("Applications directory not found for RAG indexing: %s", app_dir)
-            return Pipeline() # Return empty pipeline
-
-        docs = []
-        for filename in os.listdir(app_dir):
-            if filename.endswith(".yaml"):
-                with open(os.path.join(app_dir, filename), 'r') as f:
-                    recipe = yaml.safe_load(f)
-                    # Use keywords as the content for BM25 search
-                    content = " ".join(recipe.get("keywords", []))
-                    doc = Document(content=content, meta=recipe)
-                    docs.append(doc)
-        
-        if docs:
-            document_store.write_documents(docs)
-        
-        retriever = BM25Retriever(document_store=document_store)
-        pipeline = Pipeline()
-        pipeline.add_node(component=retriever, name="Retriever", inputs=["Query"])
-        return pipeline
-
-    def _find_matching_recipe(self, prompt: str):
-        """Finds a recipe using the Haystack RAG pipeline."""
-        results = self.rag_pipeline.run(query=prompt)
-        if results["documents"]:
-            # The meta field of the document contains our original recipe dict
-            return results["documents"][0].meta
-        return None
+    # Legacy RAG helpers removed in favor of RecipeIndex
 
     def _parse_job_id(self, output: str) -> Optional[str]:
         """Parses a job ID from a string using regex."""

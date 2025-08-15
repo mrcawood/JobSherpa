@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from jobsherpa.agent.conversation_manager import ConversationManager
+from jobsherpa.agent.types import ActionResult
 
 def test_conversation_manager_routes_to_run_job_action():
     """
@@ -13,7 +14,7 @@ def test_conversation_manager_routes_to_run_job_action():
     mock_query_history_action = MagicMock()
     
     mock_classifier.classify.return_value = "run_job"
-    mock_run_job_action.run.return_value = ("Success", "12345", False, None) # Ensure it returns a tuple
+    mock_run_job_action.run.return_value = ActionResult(message="Success", job_id="12345", is_waiting=False)
     
     # 2. Initialize Manager with Mocks
     manager = ConversationManager(
@@ -78,9 +79,7 @@ def test_conversation_manager_handles_multi_turn_conversation():
     # --- Turn 1: User asks to run a job, but a parameter is missing ---
     mock_intent_classifier.classify.return_value = "run_job"
     # Simulate RunJobAction asking for a missing parameter
-    mock_run_job_action.run.return_value = (
-        "I need an allocation...", None, True, "allocation"
-    )
+    mock_run_job_action.run.return_value = ActionResult(message="I need an allocation...", is_waiting=True, param_needed="allocation")
     
     response, _, _ = manager.handle_prompt("Run my job")
     
@@ -92,9 +91,7 @@ def test_conversation_manager_handles_multi_turn_conversation():
     # The intent should not be re-classified; the manager should use the context
     mock_intent_classifier.reset_mock()
     # Simulate RunJobAction now succeeding with the new context
-    mock_run_job_action.run.return_value = (
-        "Job submitted with ID: 12345", "12345", False, None
-    )
+    mock_run_job_action.run.return_value = ActionResult(message="Job submitted with ID: 12345", job_id="12345", is_waiting=False)
     
     response, _, _ = manager.handle_prompt("use allocation abc-123")
     
@@ -133,25 +130,19 @@ def test_conversation_manager_offers_to_save_multiple_parameters(mocker):
     )
     
     # --- Turn 1: Ask for 'allocation' ---
-    mock_run_job_action.run.return_value = (
-        "I need an allocation.", None, True, "allocation"
-    )
+    mock_run_job_action.run.return_value = ActionResult(message="I need an allocation.", is_waiting=True, param_needed="allocation")
     response, _, is_waiting = manager.handle_prompt("Run my job")
     assert "I need an allocation" in response
     assert is_waiting is True
 
     # --- Turn 2: User provides 'allocation', agent asks for 'partition' ---
-    mock_run_job_action.run.return_value = (
-        "I need a partition.", None, True, "partition"
-    )
+    mock_run_job_action.run.return_value = ActionResult(message="I need a partition.", is_waiting=True, param_needed="partition")
     response, _, is_waiting = manager.handle_prompt("use-this-alloc")
     assert "I need a partition" in response
     assert is_waiting is True
 
     # --- Turn 3: User provides 'partition', job succeeds, agent offers to save ---
-    mock_run_job_action.run.return_value = (
-        "Job submitted with ID: 12345", "12345", False, None
-    )
+    mock_run_job_action.run.return_value = ActionResult(message="Job submitted with ID: 12345", job_id="12345", is_waiting=False)
     response, _, is_waiting = manager.handle_prompt("use-this-partition")
     assert "Job submitted" in response
     assert "Would you like to save {'allocation': 'use-this-alloc', 'partition': 'use-this-partition'}" in response

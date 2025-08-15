@@ -1,6 +1,7 @@
 from jobsherpa.agent.intent_classifier import IntentClassifier
 from jobsherpa.agent.actions import RunJobAction, QueryHistoryAction
 from jobsherpa.agent.config_manager import ConfigManager
+from jobsherpa.agent.types import ActionResult
 from typing import Optional
 import logging
 
@@ -47,13 +48,15 @@ class ConversationManager:
             logger.debug("Received value for missing param '%s': %s", self._param_needed, prompt)
             self._context[self._param_needed] = prompt.strip()
             # Re-run the pending action with the new context
-            response, job_id, is_waiting, param_needed = self._pending_action.run(
+            result: ActionResult = self._pending_action.run(
                 prompt=self._pending_prompt, context=self._context
             )
 
-            if not is_waiting:  # Job was submitted or failed
+            if not result.is_waiting:  # Job was submitted or failed
                 self._is_waiting = False
                 # Offer to save only if we have a profile path to save to
+                response = result.message
+                job_id = result.job_id
                 if job_id and self._context and self.user_profile_path:
                     response += f"\nWould you like to save {self._context} to your profile? [y/N]"
                     self._is_waiting_for_save_confirmation = True
@@ -62,8 +65,11 @@ class ConversationManager:
                 else:
                     self._reset_conversation_state()
             else:  # Still waiting for more params
-                self._param_needed = param_needed
+                self._param_needed = result.param_needed
                 logger.debug("Still missing parameter: %s", self._param_needed)
+                # Provide the latest message to the user while waiting
+                response = result.message
+                job_id = result.job_id
 
             return response, job_id, self._is_waiting
 
@@ -77,12 +83,15 @@ class ConversationManager:
         else:
             # Default to running a job for any non-query intent
             logger.debug("Dispatching to RunJobAction")
-            response, job_id, is_waiting, param_needed = self.run_job_action.run(prompt=prompt, context={})
+            result: ActionResult = self.run_job_action.run(prompt=prompt, context={})
+            response = result.message
+            job_id = result.job_id
+            is_waiting = result.is_waiting
             if is_waiting:
                 self._is_waiting = True
                 self._pending_action = self.run_job_action
                 self._pending_prompt = prompt
-                self._param_needed = param_needed
+                self._param_needed = result.param_needed
                 logger.debug("Waiting for parameter: %s", self._param_needed)
             return response, job_id, is_waiting
 

@@ -1,3 +1,77 @@
+import os
+from unittest.mock import patch
+
+import pytest
+
+from jobsherpa.agent.config_manager import ConfigManager
+import jobsherpa.agent.config_manager as cm
+from jobsherpa.config import UserConfig as BaseUserConfig, UserConfigDefaults
+
+
+def write_yaml(path: str, content: str):
+    with open(path, "w") as f:
+        f.write(content)
+
+
+def test_load_uses_model_validate_when_available(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "user.yaml"
+    write_yaml(
+        cfg_path,
+        """
+defaults:
+  workspace: /tmp
+  system: test
+        """.strip(),
+    )
+
+    # Ensure model_validate path is taken by capturing a call and returning a config
+    calls = {"used": False}
+    def fake_model_validate(cls, data):
+        calls["used"] = True
+        return BaseUserConfig(defaults=UserConfigDefaults(**data["defaults"]))
+    monkeypatch.setattr(cm.UserConfig, "model_validate", classmethod(fake_model_validate), raising=False)
+
+    manager = ConfigManager(config_path=str(cfg_path))
+    loaded = manager.load()
+    assert isinstance(loaded, BaseUserConfig)
+    assert loaded.defaults.workspace == "/tmp"
+    assert loaded.defaults.system == "test"
+    assert calls["used"] is True
+
+
+def test_save_uses_model_dump_when_available(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "user.yaml"
+    # Pre-existing file to preserve structure/comments (not strictly required here)
+    write_yaml(cfg_path, "defaults: {workspace: /old, system: old}")
+
+    class Dummy:
+        def model_dump(self, exclude_none=True):
+            return {"defaults": {"workspace": "/new", "system": "new"}}
+
+    manager = ConfigManager(config_path=str(cfg_path))
+    manager.save(Dummy())
+
+    # Verify file content reflects model_dump output
+    with open(cfg_path, "r") as f:
+        text = f.read()
+    assert "workspace" in text and "/new" in text
+    assert "system" in text and "new" in text
+
+
+def test_save_falls_back_to_dict_if_no_model_dump(tmp_path):
+    cfg_path = tmp_path / "user.yaml"
+    write_yaml(cfg_path, "defaults: {workspace: /old, system: old}")
+
+    base = BaseUserConfig(defaults=UserConfigDefaults(workspace="/from_dict", system="sys"))
+
+    manager = ConfigManager(config_path=str(cfg_path))
+    manager.save(base)
+
+    with open(cfg_path, "r") as f:
+        text = f.read()
+    assert "/from_dict" in text
+    assert "sys" in text
+
 import pytest
 from ruamel.yaml import YAML
 from pydantic import ValidationError

@@ -57,9 +57,9 @@ def run_job_action(mocker, tmp_path):
         system_config=system_config,
     )
     
-    # Replace RAG pipeline with a MagicMock so tests can control and assert calls safely
-    action.rag_pipeline = MagicMock()
-    action.rag_pipeline.run = MagicMock()
+    # Replace recipe index with a MagicMock so tests can control selection
+    action.recipe_index = MagicMock()
+    action.recipe_index.find_best = MagicMock()
     return action
 
 @pytest.fixture
@@ -83,19 +83,19 @@ def test_run_job_action_renders_and_executes_template(run_job_action, tmp_path):
     mock_template = MagicMock()
     mock_template.render.return_value = "script content"
 
-    run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE)]}
+    run_job_action.recipe_index.find_best.return_value = MOCK_RECIPE
     run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
     run_job_action.tool_executor.execute.return_value = "Submitted batch job 12345"
-    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE)
+    # No-op: selection handled by recipe_index mock
 
     # 2. Act
     with patch("jinja2.Environment.get_template", return_value=mock_template), \
          patch("builtins.open", mock_open()) as m_open:
-        response, job_id, _, _ = run_job_action.run("prompt")
+        result = run_job_action.run("prompt")
 
     # 3. Assert
     # Assert RAG and workspace were used
-    # run_job_action.rag_pipeline.run.assert_called_once() # <-- This is now bypassed
+    # Selection is handled by recipe_index mock; no RAG pipeline now
     run_job_action.workspace_manager.create_job_workspace.assert_called_once()
     
     # Assert template was rendered with correct context
@@ -119,6 +119,7 @@ def test_run_job_action_renders_and_executes_template(run_job_action, tmp_path):
         job_directory=str(mock_job_workspace.job_dir),
         output_parser_info=ANY
     )
+    assert result.job_id == "12345"
 
 def test_run_job_action_fails_with_missing_requirements(run_job_action):
     """
@@ -128,15 +129,14 @@ def test_run_job_action_fails_with_missing_requirements(run_job_action):
     # 1. Setup
     # Create a system config with a requirement the user config doesn't have
     run_job_action.system_config["job_requirements"] = ["some_other_thing"]
-    run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE)]}
-    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE)
+    run_job_action.recipe_index.find_best.return_value = MOCK_RECIPE
 
     # 2. Act
-    response, job_id, _, _ = run_job_action.run("prompt")
+    result = run_job_action.run("prompt")
 
     # 3. Assert
-    assert "I need a value for 'some_other_thing'" in response
-    assert job_id is None
+    assert "I need a value for 'some_other_thing'" in result.message
+    assert result.job_id is None
     run_job_action.tool_executor.execute.assert_not_called()
 
 def test_run_job_action_executes_non_templated_job(run_job_action):
@@ -145,12 +145,12 @@ def test_run_job_action_executes_non_templated_job(run_job_action):
     that does not use a template.
     """
     # 1. Setup
-    run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_NON_TEMP_RECIPE)]}
+    run_job_action.recipe_index.find_best.return_value = MOCK_NON_TEMP_RECIPE
     run_job_action.tool_executor.execute.return_value = "hello" # No job ID for this simple command
-    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_NON_TEMP_RECIPE)
+    # No-op: selection handled by recipe_index mock
 
     # 2. Act
-    response, job_id, _, _ = run_job_action.run("prompt")
+    result = run_job_action.run("prompt")
 
     # 3. Assert
     # RAG is not invoked when _find_matching_recipe is mocked directly
@@ -162,8 +162,8 @@ def test_run_job_action_executes_non_templated_job(run_job_action):
     
     # Assert no job was registered, as no job ID was returned
     run_job_action.job_history.register_job.assert_not_called()
-    assert job_id is None
-    assert "Execution result: hello" in response
+    assert result.job_id is None
+    assert "Execution result: hello" in result.message
 
 def test_run_job_action_handles_job_submission_failure(run_job_action, tmp_path):
     """
@@ -182,16 +182,16 @@ def test_run_job_action_handles_job_submission_failure(run_job_action, tmp_path)
     mock_template = MagicMock()
     mock_template.render.return_value = "script content"
 
-    run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE)]}
+    run_job_action.recipe_index.find_best.return_value = MOCK_RECIPE
     run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
     # Simulate a failed submission (e.g., sbatch returns an error)
     run_job_action.tool_executor.execute.return_value = "sbatch: error: Invalid project account"
-    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE)
+    # No-op: selection handled by recipe_index mock
 
     # 2. Act
     with patch("jinja2.Environment.get_template", return_value=mock_template), \
          patch("builtins.open", mock_open()):
-        response, job_id, _, _ = run_job_action.run("prompt")
+        result = run_job_action.run("prompt")
 
     # 3. Assert
     # Assert that the submission was attempted
@@ -201,8 +201,8 @@ def test_run_job_action_handles_job_submission_failure(run_job_action, tmp_path)
     run_job_action.job_history.register_job.assert_not_called()
     
     # Assert that the response contains the error from the tool
-    assert job_id is None
-    assert "Execution result: sbatch: error: Invalid project account" in response
+    assert result.job_id is None
+    assert "Execution result: sbatch: error: Invalid project account" in result.message
 
 def test_query_history_action_routes_to_status(query_history_action):
     query_history_action._get_last_job_status = MagicMock()
@@ -301,7 +301,7 @@ def test_run_job_action_renders_output_parser_file(run_job_action, tmp_path):
     mock_template = MagicMock()
     mock_template.render.return_value = "script content"
 
-    run_job_action.rag_pipeline.run.return_value = {"documents": [MagicMock(meta=MOCK_RECIPE_WITH_TEMPLATE_IN_PARSER)]}
+    run_job_action.recipe_index.find_best.return_value = MOCK_RECIPE_WITH_TEMPLATE_IN_PARSER
     run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
     run_job_action.tool_executor.execute.return_value = "Submitted batch job 12345"
     run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE_WITH_TEMPLATE_IN_PARSER)
@@ -328,16 +328,16 @@ def test_run_job_action_asks_for_missing_parameters(run_job_action):
     # 1. Setup: Make 'allocation' a missing parameter
     run_job_action.user_config.defaults.allocation = None
     run_job_action.system_config["job_requirements"] = ["allocation"]
-    run_job_action._find_matching_recipe = MagicMock(return_value=MOCK_RECIPE)
+    run_job_action.recipe_index.find_best.return_value = MOCK_RECIPE
     
     # 2. Act
-    response, job_id, is_waiting, param_needed = run_job_action.run(prompt="Run the random number generator")
+    result = run_job_action.run(prompt="Run the random number generator")
     
     # 3. Assert
-    assert job_id is None
-    assert is_waiting is True
-    assert param_needed == "allocation"
-    assert "I need a value for 'allocation'" in response
+    assert result.job_id is None
+    assert result.is_waiting is True
+    assert result.param_needed == "allocation"
+    assert "I need a value for 'allocation'" in result.message
 
 def test_run_job_action_gathers_workspace_and_system_from_context(run_job_action, mocker):
     """
@@ -356,15 +356,15 @@ def test_run_job_action_gathers_workspace_and_system_from_context(run_job_action
     mocker.patch("builtins.open", mocked_open)
 
     # 2. Act: Provide the workspace in the first turn
-    response, _, _, _ = run_job_action.run(prompt="run job", context={"workspace": "/tmp/test_ws"})
-    assert response == "I need a system profile to run this job. What system should I use?"
+    result = run_job_action.run(prompt="run job", context={"workspace": "/tmp/test_ws"})
+    assert result.message == "I need a system profile to run this job. What system should I use?"
     
     # 3. Act: Provide the system in the second turn
-    response, _, _, _ = run_job_action.run(prompt="run job", context={"workspace": "/tmp/test_ws", "system": "mock_slurm"})
+    result = run_job_action.run(prompt="run job", context={"workspace": "/tmp/test_ws", "system": "mock_slurm"})
     
     # 4. Assert: The action now proceeds to the RAG step (or fails there, which is fine)
-    assert "I need a system profile" not in response
-    assert "I need a workspace" not in response
+    assert "I need a system profile" not in result.message
+    assert "I need a workspace" not in result.message
     assert run_job_action.system_config["name"] == "mock_slurm"
     assert run_job_action.workspace_manager.base_path == Path("/tmp/test_ws")
 

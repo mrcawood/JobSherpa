@@ -1,5 +1,4 @@
 import time
-import subprocess
 import re
 import logging
 from typing import Optional
@@ -8,13 +7,17 @@ import json
 
 logger = logging.getLogger(__name__)
 
+from jobsherpa.agent.scheduler import SchedulerClient, SlurmSchedulerClient
+
+
 class JobHistory:
     """
     Manages the state of active and completed jobs, with persistence.
     """
-    def __init__(self, history_file_path: Optional[str] = None):
+    def __init__(self, history_file_path: Optional[str] = None, scheduler_client: Optional[SchedulerClient] = None):
         self.history_file_path = history_file_path
         self._jobs = self._load_state()
+        self.scheduler_client = scheduler_client or SlurmSchedulerClient()
 
     def _load_state(self) -> dict:
         """Loads the job history from the JSON file."""
@@ -163,25 +166,11 @@ class JobHistory:
             logger.warning("Error parsing result for job %s from %s: %s", job_id, output_file_path, e, exc_info=True)
 
     def _parse_squeue_status(self, job_ids: list[str]) -> dict:
-        """Parses the status from squeue output."""
-        command = ["squeue", "--jobs=" + ",".join(job_ids), "--noheader", "--format=%i,%T"]
-        logger.debug("Running squeue command: %s", " ".join(command))
-        squeue_result = subprocess.run(command, capture_output=True, text=True)
-        
-        if squeue_result.stderr:
-            logger.warning("squeue command returned an error:\n%s", squeue_result.stderr)
-
-        logger.debug("squeue stdout:\n%s", squeue_result.stdout)
-        
-        squeue_statuses = {}
-        for line in squeue_result.stdout.strip().splitlines():
-            parts = line.split(',')
-            if len(parts) == 2:
-                job_id, state = parts[0].strip(), parts[1].strip()
-                normalized_state = self._normalize_squeue_state(state)
-                squeue_statuses[job_id] = normalized_state
-                logger.debug("Parsed squeue status for job %s: %s -> %s", job_id, state, normalized_state)
-        return squeue_statuses
+        """Fetch active statuses using the scheduler client (squeue equivalent)."""
+        statuses = self.scheduler_client.get_active_statuses(job_ids)
+        for job_id, state in statuses.items():
+            logger.debug("Active status for %s: %s", job_id, state)
+        return statuses
 
     def _normalize_squeue_state(self, squeue_state: str) -> str:
         """Normalizes various SQUEUE state strings to a common format."""
@@ -201,30 +190,11 @@ class JobHistory:
         return squeue_state # Fallback for other states
 
     def _parse_sacct_status(self, job_ids: list[str]) -> dict:
-        """Parses the final status from sacct output."""
-        command = ["sacct", "--jobs=" + ",".join(job_ids), "--noheader", "--format=JobId,State,ExitCode"]
-        logger.debug("Running sacct command: %s", " ".join(command))
-        sacct_result = subprocess.run(command, capture_output=True, text=True)
-
-        if sacct_result.stderr:
-            logger.warning("sacct command returned an error:\n%s", sacct_result.stderr)
-            
-        logger.debug("sacct stdout:\n%s", sacct_result.stdout)
-
-        sacct_statuses = {}
-        # We only care about the primary job entry, not sub-steps like '.batch'
-        for line in sacct_result.stdout.strip().splitlines():
-            parts = line.split()
-            # The job ID is the first part. Check if it starts with any of our target IDs.
-            if len(parts) > 1 and any(parts[0].startswith(target_id) for target_id in job_ids):
-                job_id = next(target_id for target_id in job_ids if parts[0].startswith(target_id))
-                state = parts[1].strip()
-                normalized_state = self._normalize_sacct_state(state)
-                # Only update if we haven't already found a final state for this job ID
-                if job_id not in sacct_statuses:
-                    sacct_statuses[job_id] = normalized_state
-                    logger.debug("Parsed sacct status for job %s: %s -> %s", job_id, state, normalized_state)
-        return sacct_statuses
+        """Fetch final statuses using the scheduler client (sacct equivalent)."""
+        statuses = self.scheduler_client.get_final_statuses(job_ids)
+        for job_id, state in statuses.items():
+            logger.debug("Final status for %s: %s", job_id, state)
+        return statuses
 
     def _normalize_sacct_state(self, sacct_state: str) -> str:
         """Normalizes various SACCT state strings to a common format."""
