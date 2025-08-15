@@ -16,6 +16,8 @@ from haystack.nodes import BM25Retriever
 from haystack import Document
 from jobsherpa.agent.types import ActionResult
 from jobsherpa.agent.recipe_index import SimpleKeywordIndex
+from jobsherpa.kb.models import SystemProfile, ApplicationRecipe
+from jobsherpa.kb.dataset_index import DatasetIndex
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,18 @@ class RunJobAction:
         # Replace bespoke RAG plumbing with a RecipeIndex abstraction
         self.recipe_index = SimpleKeywordIndex(knowledge_base_dir)
         self.recipe_index.index()
+        self.dataset_index = DatasetIndex(base_dir=knowledge_base_dir)
+        self.dataset_index.index()
+        # Normalize system profile to Pydantic model if possible
+        self.system_profile_model: Optional[SystemProfile] = None
+        if isinstance(system_config, dict):
+            try:
+                self.system_profile_model = SystemProfile.model_validate(system_config)  # type: ignore[attr-defined]
+            except AttributeError:
+                try:
+                    self.system_profile_model = SystemProfile.parse_obj(system_config)  # type: ignore[attr-defined]
+                except Exception:
+                    self.system_profile_model = None
 
     def run(self, prompt: str, context: Optional[dict] = None) -> ActionResult:
         # First, try to update the agent's configuration from the conversational context
@@ -84,6 +98,15 @@ class RunJobAction:
             return ActionResult(message="Sorry, I don't know how to handle that.")
         
         logger.debug("Found matching recipe: %s", recipe["name"])
+        # Try to normalize recipe to ApplicationRecipe for typed access
+        recipe_model: Optional[ApplicationRecipe] = None
+        try:
+            recipe_model = ApplicationRecipe.model_validate(recipe)  # type: ignore[attr-defined]
+        except AttributeError:
+            try:
+                recipe_model = ApplicationRecipe.parse_obj(recipe)  # type: ignore[attr-defined]
+            except Exception:
+                recipe_model = None
         
         job_name = recipe.get("template_args", {}).get("job_name", "jobsherpa-job")
         job_workspace = None
@@ -113,6 +136,30 @@ class RunJobAction:
             
             # Add recipe-specific args, which have the highest precedence
             template_context.update(recipe.get("template_args", {}))
+
+            # Integrate KB-derived fields
+            # System: module init, launcher, partition fallback
+            if self.system_profile_model:
+                # module init commands for environment setup
+                if self.system_profile_model.module_init:
+                    template_context.setdefault("module_init", self.system_profile_model.module_init)
+                # launcher (e.g., ibrun/srun)
+                if self.system_profile_model.commands.launcher:
+                    template_context.setdefault("launcher", self.system_profile_model.commands.launcher)
+                # partition fallback
+                if not template_context.get("partition") and self.system_profile_model.available_partitions:
+                    template_context["partition"] = self.system_profile_model.available_partitions[0]
+
+            # Application: module loads
+            if recipe_model and recipe_model.module_loads:
+                template_context.setdefault("module_loads", recipe_model.module_loads)
+
+            # Dataset: resolve from prompt, apply resource hints
+            dataset_profile = self.dataset_index.resolve(prompt)
+            if dataset_profile:
+                hints = dataset_profile.resource_hints or {}
+                template_context.setdefault("nodes", hints.get("nodes"))
+                template_context.setdefault("time", hints.get("time"))
 
             # --- 2. Validate Final Context ---
             missing_or_empty_params = []

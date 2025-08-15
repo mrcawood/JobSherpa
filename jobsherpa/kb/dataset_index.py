@@ -18,14 +18,17 @@ class DatasetIndex:
         for filename in os.listdir(datasets_dir):
             if filename.endswith(".yaml"):
                 path = os.path.join(datasets_dir, filename)
-                with open(path, "r") as f:
-                    data = yaml.safe_load(f) or {}
                 try:
-                    profile = DatasetProfile.model_validate(data)  # type: ignore[attr-defined]
-                except AttributeError:
-                    profile = DatasetProfile.parse_obj(data)  # type: ignore[attr-defined]
+                    with open(path, "r") as f:
+                        data = yaml.safe_load(f) or {}
+                    try:
+                        profile = DatasetProfile.model_validate(data)  # type: ignore[attr-defined]
+                    except AttributeError:
+                        profile = DatasetProfile.parse_obj(data)  # type: ignore[attr-defined]
+                except Exception:
+                    # Skip invalid or unreadable dataset profiles
+                    continue
                 self._name_to_profile[profile.name.lower()] = profile
-                # map aliases and name to the canonical name
                 for alias in [profile.name] + profile.aliases:
                     self._alias_to_name[alias.lower()] = profile.name.lower()
 
