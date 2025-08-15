@@ -22,6 +22,7 @@ from jobsherpa.kb.module_client import ModuleClient
 from jobsherpa.kb.system_index import SystemIndex
 from jobsherpa.kb.app_registry import AppRegistry
 from jobsherpa.kb.site_loader import load_site_profile
+from jobsherpa.kb.scheduler_loader import load_scheduler_profile
 
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,16 @@ class RunJobAction:
                 if os.path.exists(system_config_path):
                     with open(system_config_path, 'r') as f:
                         self.system_config = yaml.safe_load(f)
+                    # Always load scheduler command mappings from scheduler KB (single source of truth)
+                    if isinstance(self.system_config, dict):
+                        scheduler_name = self.system_config.get("scheduler")
+                        if scheduler_name:
+                            sched_profile = load_scheduler_profile(scheduler_name, base_dir=self.knowledge_base_dir)
+                            if sched_profile and getattr(sched_profile, "commands", None):
+                                try:
+                                    self.system_config["commands"] = sched_profile.commands.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+                                except AttributeError:
+                                    self.system_config["commands"] = sched_profile.commands.dict(exclude_none=True)  # type: ignore[attr-defined]
                     self.user_config.defaults.system = system_name
                 else:
                     return ActionResult(
