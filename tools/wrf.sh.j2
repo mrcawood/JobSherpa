@@ -1,0 +1,22 @@
+#!/bin/bash
+
+#SBATCH --job-name={{ job_name }}
+#SBATCH --output=slurm/slurm-%j.out
+#SBATCH --error=slurm/slurm-%j.err
+#SBATCH --partition={{ partition }}
+{% if allocation %}#SBATCH --account={{ allocation }}{% endif %}
+#SBATCH --nodes={{ nodes }}
+#SBATCH --ntasks-per-node={{ ntasks_per_node }}
+#SBATCH --time={{ time }}
+
+{% for cmd in module_init or [] %}
+{{ cmd }}
+{% endfor %}
+{% for mod in module_loads or [] %}
+ml {{ mod }}
+{% endfor %}
+
+cd {{ job_dir }}
+{{ launcher or "srun" }} {{ wrf_exe or "wrf.exe" }}
+
+

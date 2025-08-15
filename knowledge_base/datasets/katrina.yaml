@@ -1,0 +1,16 @@
+name: katrina
+aliases:
+  - hurricane katrina
+locations:
+  Frontera: /scratch1/datasets/katrina
+staging:
+  url: https://example.com/katrina.tgz
+  steps:
+    - tar xzf katrina.tgz
+pre_run_edits:
+  - "sed -i 's/run_hours.*/run_hours = 6/' namelist.input"
+  - "sed -i 's/interval_seconds.*/interval_seconds = 10800/' namelist.input"
+resource_hints:
+  nodes: 4
+  time: "02:00:00"
+

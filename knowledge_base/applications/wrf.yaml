@@ -1,0 +1,19 @@
+name: wrf
+description: Weather Research and Forecasting model (runtime only)
+keywords:
+  - wrf
+  - weather
+  - simulation
+template: wrf.sh.j2
+template_args:
+  job_name: wrf-run
+  nodes: 1
+  ntasks_per_node: 56
+  time: "02:00:00"
+module_loads:
+  - intel/19
+  - impi/19
+output_parser:
+  file: "slurm/slurm-{{ job_id }}.out"
+  parser_regex: "Time.*: (\\d+)"
+
