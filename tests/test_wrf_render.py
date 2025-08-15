@@ -11,13 +11,13 @@ def test_wrf_script_renders_header_and_launcher(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     sys = load_system_profile_file(str(repo_root / "knowledge_base/system/frontera.yaml"))
     app = load_application_recipe_file(str(repo_root / "knowledge_base/applications/wrf.yaml"))
-    ds = load_dataset_profile_file(str(repo_root / "knowledge_base/datasets/katrina.yaml"))
+    ds = load_dataset_profile_file(str(repo_root / "knowledge_base/datasets/new_conus12km.yaml"))
 
     # Compose minimal context
     job_dir = tmp_path / "wrf_job"
     os.makedirs(job_dir / "slurm", exist_ok=True)
     context = {
-        "job_name": "wrf-katrina",
+        "job_name": "wrf-new_conus12km",
         "partition": sys.available_partitions[0],
         "allocation": "A-ccsc",
         "nodes": 1,
@@ -25,7 +25,7 @@ def test_wrf_script_renders_header_and_launcher(tmp_path):
         "time": "01:00:00",
         "module_init": sys.module_init,
         "module_loads": app.module_loads,
-        "launcher": sys.commands.launcher or "srun",
+        "launcher": (sys.launcher or "srun"),
         "wrf_exe": "wrf.exe",
         "job_dir": str(job_dir),
         "dataset_path": ds.locations.get("Frontera"),
