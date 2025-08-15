@@ -1,20 +1,11 @@
 #!/bin/bash
 
-#SBATCH --job-name={{ job_name }}
-#SBATCH --output=slurm/slurm-%j.out
-#SBATCH --error=slurm/slurm-%j.err
-#SBATCH --partition={{ partition }}
-{% if allocation %}#SBATCH --account={{ allocation }}{% endif %}
-#SBATCH --nodes={{ nodes }}
-#SBATCH --ntasks-per-node={{ ntasks_per_node }}
-#SBATCH --time={{ time }}
+{% import 'blocks/slurm_header.j2' as slurm %}
+{% import 'blocks/modules.j2' as blocks %}
 
-{% for cmd in module_init or [] %}
-{{ cmd }}
-{% endfor %}
-{% for mod in module_loads or [] %}
-ml {{ mod }}
-{% endfor %}
+{{ slurm.slurm_header(job_name, partition, allocation, nodes, ntasks_per_node, time) }}
+
+{{ blocks.module_setup(module_init or [], module_loads or []) }}
 
 cd {{ job_dir }}
 {{ launcher or "srun" }} {{ wrf_exe or "wrf.exe" }}

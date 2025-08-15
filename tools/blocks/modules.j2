@@ -1,0 +1,10 @@
+{% macro module_setup(module_init=[], module_loads=[]) -%}
+{%- for cmd in module_init %}
+{{ cmd }}
+{%- endfor %}
+{%- for mod in module_loads %}
+ml {{ mod }}
+{%- endfor %}
+{%- endmacro %}
+
+
