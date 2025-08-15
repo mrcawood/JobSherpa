@@ -4,9 +4,10 @@ aliases:
 locations:
   Frontera: /scratch1/datasets/katrina
 staging:
-  url: https://example.com/katrina.tgz
+  url: /work2/06280/mcawood/repo_backup/new_conus12km.tgz
   steps:
-    - tar xzf katrina.tgz
+    - cp {{ staging.url }} .
+    - tar xzf $(basename {{ staging.url }})
 pre_run_edits:
   - "sed -i 's/run_hours.*/run_hours = 6/' namelist.input"
   - "sed -i 's/interval_seconds.*/interval_seconds = 10800/' namelist.input"

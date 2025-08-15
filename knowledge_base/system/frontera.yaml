@@ -1,21 +1,15 @@
 name: Frontera
 scheduler: slurm
 description: TACC Frontera system
-commands:
-  submit: sbatch
-  status: squeue
-  history: sacct
-  cancel: scancel
-  launcher: ibrun
-job_requirements:
-  - partition
-  - allocation
+launcher: ibrun
 available_partitions:
   - normal
   - development
-module_init:
-  - ml use /scratch1/hpc_tools/benchpro-dev/modulefiles
 filesystem_roots:
   scratch: /scratch1
   work: /work2
+site: TACC
+apps:
+  wrf:
+    exe_path: /scratch1/06280/mcawood/benchpro/apps/frontera/cascadelake/intel19/impi19/wrf/4.4/avx2/install/main/wrf.exe
 
