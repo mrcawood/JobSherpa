@@ -19,6 +19,8 @@ from jobsherpa.agent.recipe_index import SimpleKeywordIndex
 from jobsherpa.kb.models import SystemProfile, ApplicationRecipe
 from jobsherpa.kb.dataset_index import DatasetIndex
 from jobsherpa.kb.module_client import ModuleClient
+from jobsherpa.kb.system_index import SystemIndex
+from jobsherpa.kb.app_registry import AppRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,11 @@ class RunJobAction:
         self.recipe_index.index()
         self.dataset_index = DatasetIndex(base_dir=knowledge_base_dir)
         self.dataset_index.index()
+        self.system_index = SystemIndex(base_dir=knowledge_base_dir)
+        self.system_index.index()
+        # App registry stored under workspace/.jobsherpa/apps.json
+        history_dir = os.path.dirname(job_history.history_file_path) if getattr(job_history, 'history_file_path', None) else os.path.join(os.getcwd(), ".jobsherpa")
+        self.app_registry = AppRegistry(registry_path=os.path.join(history_dir, "apps.json"))
         # Normalize system profile to Pydantic model if possible
         self.system_profile_model: Optional[SystemProfile] = None
         if isinstance(system_config, dict):
@@ -84,11 +91,26 @@ class RunJobAction:
             )
         
         if not self.system_config:
-            return ActionResult(
-                message="I need a system profile to run this job. What system should I use?",
-                is_waiting=True,
-                param_needed="system",
-            )
+            # Try to resolve system from prompt
+            sys_profile = self.system_index.resolve(prompt)
+            if sys_profile:
+                # Normalize and set
+                try:
+                    self.system_config = sys_profile.model_dump()  # type: ignore[attr-defined]
+                except AttributeError:
+                    self.system_config = sys_profile.dict()
+                self.system_profile_model = sys_profile
+                # Persist into user config defaults if pydantic
+                try:
+                    self.user_config.defaults.system = sys_profile.name.lower()
+                except Exception:
+                    pass
+            else:
+                return ActionResult(
+                    message="I need a system profile to run this job. What system should I use?",
+                    is_waiting=True,
+                    param_needed="system",
+                )
             
         logger.info("Agent received prompt: '%s'", prompt)
 
@@ -160,6 +182,17 @@ class RunJobAction:
                     template_context.setdefault("module_init", init_cmds)
                 if loads:
                     template_context.setdefault("module_loads", loads)
+                # Resolve executable path: prefer modules (PATH). If no modules, try system binding or registry.
+                if not loads:
+                    exe_name = (recipe_model.binary or {}).get("name") if recipe_model.binary else None
+                    # Check system bindings first
+                    sys_bind = (self.system_profile_model.apps or {}).get(recipe_model.name, {})
+                    exe_path = sys_bind.get("exe_path") or self.app_registry.get_exe_path(self.system_profile_model.name, recipe_model.name)
+                    if exe_path:
+                        template_context.setdefault("wrf_exe", exe_path)
+                    elif exe_name:
+                        # Let PATH handle it by name
+                        template_context.setdefault("wrf_exe", exe_name)
 
             # Dataset: resolve from prompt, apply resource hints
             dataset_profile = self.dataset_index.resolve(prompt)
@@ -167,6 +200,17 @@ class RunJobAction:
                 hints = dataset_profile.resource_hints or {}
                 template_context.setdefault("nodes", hints.get("nodes"))
                 template_context.setdefault("time", hints.get("time"))
+                # dataset path for the current system if available
+                if self.system_profile_model and dataset_profile.locations:
+                    sys_name = self.system_profile_model.name
+                    ds_path = dataset_profile.locations.get(sys_name)
+                    if ds_path:
+                        template_context.setdefault("dataset_path", ds_path)
+                # staging steps and pre-run edits
+                if dataset_profile.staging and dataset_profile.staging.steps:
+                    template_context.setdefault("staging_steps", dataset_profile.staging.steps)
+                if dataset_profile.pre_run_edits:
+                    template_context.setdefault("pre_run_edits", dataset_profile.pre_run_edits)
 
             # --- 2. Validate Final Context ---
             missing_or_empty_params = []

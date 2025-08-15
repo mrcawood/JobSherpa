@@ -19,6 +19,7 @@ class SystemProfile(BaseModel):
     available_partitions: List[str] = Field(default_factory=list)
     module_init: List[str] = Field(default_factory=list)  # commands to prep module environment
     filesystem_roots: Dict[str, str] = Field(default_factory=dict)  # e.g., {scratch: "/scratch", work: "/work"}
+    apps: Dict[str, Dict[str, str]] = Field(default_factory=dict)  # optional per-app bindings (e.g., {wrf: {module: ..., exe_path: ...}})
 
 
 class OutputParser(BaseModel):
@@ -34,6 +35,7 @@ class ApplicationRecipe(BaseModel):
     template_args: Dict[str, Any] = Field(default_factory=dict)
     module_loads: List[str] = Field(default_factory=list)
     output_parser: Optional[OutputParser] = None
+    binary: Optional[Dict[str, str]] = None  # e.g., {name: "wrf.exe"}
 
 
 class StagingSpec(BaseModel):

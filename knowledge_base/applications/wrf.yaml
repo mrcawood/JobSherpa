@@ -10,10 +10,13 @@ template_args:
   nodes: 1
   ntasks_per_node: 56
   time: "02:00:00"
+tool: submit
 module_loads:
   - intel/19
   - impi/19
 output_parser:
   file: "slurm/slurm-{{ job_id }}.out"
   parser_regex: "Time.*: (\\d+)"
+binary:
+  name: wrf.exe
 
