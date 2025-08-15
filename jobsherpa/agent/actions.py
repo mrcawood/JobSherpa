@@ -18,6 +18,7 @@ from jobsherpa.agent.types import ActionResult
 from jobsherpa.agent.recipe_index import SimpleKeywordIndex
 from jobsherpa.kb.models import SystemProfile, ApplicationRecipe
 from jobsherpa.kb.dataset_index import DatasetIndex
+from jobsherpa.kb.module_client import ModuleClient
 
 
 logger = logging.getLogger(__name__)
@@ -150,9 +151,15 @@ class RunJobAction:
                 if not template_context.get("partition") and self.system_profile_model.available_partitions:
                     template_context["partition"] = self.system_profile_model.available_partitions[0]
 
-            # Application: module loads
-            if recipe_model and recipe_model.module_loads:
-                template_context.setdefault("module_loads", recipe_model.module_loads)
+            # Application: module loads via ModuleClient abstraction
+            if self.system_profile_model and recipe_model:
+                mc = ModuleClient(system=self.system_profile_model, app=recipe_model)
+                init_cmds = mc.module_init_commands()
+                loads = mc.module_loads()
+                if init_cmds:
+                    template_context.setdefault("module_init", init_cmds)
+                if loads:
+                    template_context.setdefault("module_loads", loads)
 
             # Dataset: resolve from prompt, apply resource hints
             dataset_profile = self.dataset_index.resolve(prompt)

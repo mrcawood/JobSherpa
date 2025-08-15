@@ -55,14 +55,30 @@ class SimpleKeywordIndex(RecipeIndex):
         if not self._recipes:
             self.index()
         prompt_l = prompt.lower()
+        # Pre-filter: prefer recipes whose name appears in the prompt
+        candidates = [r for r in self._recipes if r.get("name", "").lower() in prompt_l]
+        search_space = candidates if candidates else self._recipes
         best_score = 0
         best_recipe = None
-        for recipe in self._recipes:
+        for recipe in search_space:
             keywords = [k.lower() for k in recipe.get("keywords", [])]
             score = sum(1 for k in keywords if k and k in prompt_l)
             if score > best_score:
                 best_score = score
                 best_recipe = recipe
-        return best_recipe if best_score > 0 else None
+        # Only return if we achieved a positive score (some keyword overlap)
+        if best_recipe is not None and best_score > 0:
+            return best_recipe
+        # If no keyword overlap but there is exactly one keyword hit in exactly one recipe, pick it
+        # Compute scores again across full set to detect single-hit case
+        scores = []
+        for recipe in self._recipes:
+            keywords = [k.lower() for k in recipe.get("keywords", [])]
+            score = sum(1 for k in keywords if k and k in prompt_l)
+            scores.append((score, recipe))
+        nonzero = [(s, r) for s, r in scores if s > 0]
+        if len(nonzero) == 1:
+            return nonzero[0][1]
+        return None
 
 
