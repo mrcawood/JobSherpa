@@ -339,6 +339,9 @@ class RunJobAction:
                 if not template_context.get("partition") and self.system_profile_model.available_partitions:
                     template_context["partition"] = self.system_profile_model.available_partitions[0]
                     provenance.set("partition", template_context["partition"], "system KB (fallback)")
+                # reservation: optional in user/site/system defaults; pass-through if present
+                if template_context.get("reservation"):
+                    provenance.setdefault("reservation", template_context.get("reservation"), "user/system/site KB")
 
             # Application: module loads via ModuleClient abstraction
             if self.system_profile_model and recipe_model:
