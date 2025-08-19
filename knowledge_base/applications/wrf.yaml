@@ -19,4 +19,5 @@ output_parser:
   parser_regex: "Time.*: (\\d+)"
 binary:
   name: wrf.exe
+dataset_required: true
 

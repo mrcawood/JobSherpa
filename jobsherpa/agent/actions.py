@@ -393,6 +393,17 @@ class RunJobAction:
                     template_context.setdefault("staging_steps", dataset_profile.staging.steps)
                 if dataset_profile.pre_run_edits:
                     template_context.setdefault("pre_run_edits", dataset_profile.pre_run_edits)
+            else:
+                # Enforce dataset presence if the application requires it
+                if recipe_model and getattr(recipe_model, "dataset_required", False):
+                    return ActionResult(
+                        message=(
+                            "This application requires a dataset. Please mention the dataset in your prompt "
+                            "(e.g., 'new_conus12km') or provide dataset parameters."
+                        ),
+                        is_waiting=True,
+                        param_needed="dataset",
+                    )
 
             # --- 2. Validate Final Context ---
             missing_or_empty_params = []

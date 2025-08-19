@@ -53,6 +53,7 @@ class ApplicationRecipe(BaseModel):
     module_loads: List[str] = Field(default_factory=list)
     output_parser: Optional[OutputParser] = None
     binary: Optional[Dict[str, str]] = None  # e.g., {name: "wrf.exe"}
+    dataset_required: bool = False
 
 
 class StagingSpec(BaseModel):
