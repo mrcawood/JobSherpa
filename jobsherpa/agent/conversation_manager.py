@@ -32,12 +32,34 @@ class ConversationManager:
         
     def handle_prompt(self, prompt: str):
         logger.debug("Handling prompt: %s", prompt)
-        # State 1: Waiting for save confirmation
+        # State 1: Waiting for save confirmation/selection
         if self._is_waiting_for_save_confirmation:
             logger.debug("Waiting for save confirmation. User replied: %s", prompt)
-            if prompt.lower() in ["y", "yes"]:
-                self._save_context_to_profile()
-                response = "Configuration saved!"
+            reply = (prompt or "").strip().lower()
+            # Normalize reply into a selection of keys
+            keys_to_save = None  # None => save nothing
+            if reply in {"y", "yes", "all"}:
+                keys_to_save = list(self._context.keys())
+            elif reply in {"n", "no", "none"}:
+                keys_to_save = []
+            else:
+                # Parse comma/space separated keys
+                parts = [p.strip() for p in reply.replace(" ", ",").split(",") if p.strip()]
+                if parts:
+                    known = set(self._context.keys())
+                    keys_to_save = [k for k in parts if k in known]
+                    unknown = [k for k in parts if k not in known]
+                    if unknown:
+                        logger.warning("Ignoring unknown keys in save selection: %s", ", ".join(unknown))
+                else:
+                    keys_to_save = []
+
+            if keys_to_save is not None:
+                if keys_to_save:
+                    self._save_context_to_profile(selected_keys=keys_to_save)
+                    response = "Configuration saved!"
+                else:
+                    response = "Okay, I won't save these settings."
             else:
                 response = "Okay, I won't save these settings."
             self._reset_conversation_state()
@@ -52,13 +74,16 @@ class ConversationManager:
                 prompt=self._pending_prompt, context=self._context
             )
 
-            if not result.is_waiting:  # Job was submitted or failed
+            if not result.is_waiting:  # Job was submitted, failed, or dry-run finished
                 self._is_waiting = False
                 # Offer to save only if we have a profile path to save to
                 response = result.message
                 job_id = result.job_id
-                if job_id and self._context and self.user_profile_path:
-                    response += f"\nWould you like to save {self._context} to your profile? [y/N]"
+                if self._context and self.user_profile_path:
+                    response += (
+                        f"\nWould you like to save {self._context} to your profile? "
+                        f"(reply 'all', 'none', or comma-separated keys like allocation,partition)"
+                    )
                     self._is_waiting_for_save_confirmation = True
                     self._is_waiting = True  # Keep session open for the save confirmation
                     logger.debug("Awaiting save confirmation for context: %s", self._context)
@@ -95,19 +120,44 @@ class ConversationManager:
                 logger.debug("Waiting for parameter: %s", self._param_needed)
             return response, job_id, is_waiting
 
-    def _save_context_to_profile(self):
-        """Loads the user profile, updates it with the context, and saves it."""
+    def _save_context_to_profile(self, selected_keys: Optional[list[str]] = None):
+        """Loads the user profile, updates it with the context (optionally restricted to selected_keys), and saves it.
+
+        Fault-tolerant: if the existing profile fails validation, we create a minimal
+        profile and still persist the selected keys rather than crashing.
+        """
         if not self.user_profile_path:
-            return # Should not happen in this flow
-            
+            return  # Should not happen in this flow
+
         config_manager = ConfigManager(config_path=self.user_profile_path)
-        config = config_manager.load()
-        
-        for key, value in self._context.items():
-            setattr(config.defaults, key, value)
-            
-        config_manager.save(config)
-        logger.info("Saved context to profile %s: %s", self.user_profile_path, self._context)
+        try:
+            config = config_manager.load()
+        except Exception as e:
+            # Build a minimal config and proceed
+            logger.warning("Profile load failed at %s (%s). Creating minimal config to persist selected keys.", self.user_profile_path, e)
+            try:
+                from jobsherpa.config import UserConfig, UserConfigDefaults
+                config = UserConfig(defaults=UserConfigDefaults(workspace="", system=""))
+            except Exception:
+                # Last resort: do nothing
+                logger.error("Failed to construct minimal user config; aborting save.")
+                return
+
+        items = list(self._context.items())
+        if selected_keys is not None:
+            selected = set(selected_keys)
+            items = [(k, v) for k, v in items if k in selected]
+        for key, value in items:
+            try:
+                setattr(config.defaults, key, value)
+            except Exception:
+                logger.warning("Skipping unsupported key '%s' during save.", key)
+
+        try:
+            config_manager.save(config)
+            logger.info("Saved context to profile %s: %s", self.user_profile_path, dict(items))
+        except Exception as e:
+            logger.error("Failed to save profile at %s (%s)", self.user_profile_path, e)
         
     def _reset_conversation_state(self):
         """Resets all state attributes of the conversation."""

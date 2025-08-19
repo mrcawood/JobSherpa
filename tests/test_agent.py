@@ -76,3 +76,24 @@ def test_agent_initialization_handles_missing_user_profile(mocker):
     assert agent.workspace == ""
     # The conversation manager should not have a path, preventing save offers.
     assert agent.conversation_manager.user_profile_path is None
+
+
+def test_lenient_user_profile_load_preserves_known_defaults(mocker):
+    # Simulate existing profile with partial/unknown defaults
+    mocker.patch("os.path.exists", return_value=True)
+    raw_yaml = """
+defaults:
+  allocation: ABC-123
+  partition: dev
+  unknown_key: foo
+""".strip()
+    mocker.patch("builtins.open", mock_open(read_data=raw_yaml))
+    # Force ConfigManager.load to fail to trigger lenient path
+    mocker.patch("jobsherpa.agent.agent.ConfigManager.load", side_effect=Exception("validation error"))
+    agent = JobSherpaAgent(user_profile="someone", knowledge_base_dir="kb")
+    # Known fields preserved; missing requireds become empty strings
+    assert agent.workspace == ""
+    # Access run_job_action's user_config via conversation manager
+    rja = agent.conversation_manager._pending_action or agent.conversation_manager.run_job_action
+    assert rja.user_config.defaults.allocation == "ABC-123"
+    assert rja.user_config.defaults.partition == "dev"

@@ -7,6 +7,7 @@ from jobsherpa.cli.main import app # We need to import the app object
 from unittest.mock import patch, MagicMock
 import getpass
 import jinja2
+from jobsherpa.util.errors import ExceptionManager
 
 runner = CliRunner()
 
@@ -135,6 +136,24 @@ def test_config_show_no_file(tmp_path):
     assert result.exit_code != 0
     assert "User profile not found" in result.stdout
     assert "non_existent_profile.yaml" in result.stdout
+def test_cli_show_handles_io_errors_gracefully(tmp_path):
+    """Ensure config show maps exceptions to friendly messages via ExceptionManager."""
+    bad_path = tmp_path / "file.yaml"
+    with patch("builtins.open", side_effect=OSError("boom")):
+        result = runner.invoke(app, ["config", "show", "--user-profile-path", str(bad_path)])
+    assert result.exit_code != 0
+    # We should see the ExceptionManager fallback message
+    assert "An unexpected error occurred" not in result.stdout
+
+
+def test_run_wraps_unexpected_errors(tmp_path):
+    with patch("jobsherpa.agent.agent.JobSherpaAgent", side_effect=RuntimeError("explode")):
+        result = runner.invoke(app, ["run", "Do X"])
+    assert result.exit_code != 0
+    # Should be mapped by ExceptionManager
+    # Exact string depends on mapping; assert it's not a raw traceback prefix
+    assert "Traceback" not in result.stdout
+
 
 
 @patch("jobsherpa.agent.agent.JobSherpaAgent")

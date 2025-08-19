@@ -8,6 +8,12 @@ class SystemCommands(BaseModel):
     history: str
     cancel: Optional[str] = None
     launcher: Optional[str] = None  # e.g., srun, ibrun
+    # Forbid unknown keys across Pydantic v1/v2
+    try:  # Pydantic v2
+        model_config = {"extra": "forbid"}  # type: ignore[attr-defined]
+    except Exception:
+        class Config:  # Pydantic v1
+            extra = "forbid"
 
 
 class SystemProfile(BaseModel):
@@ -26,6 +32,11 @@ class SystemProfile(BaseModel):
 class SchedulerProfile(BaseModel):
     name: str
     commands: SystemCommands
+    try:
+        model_config = {"extra": "forbid"}  # type: ignore[attr-defined]
+    except Exception:
+        class Config:
+            extra = "forbid"
 
 
 class OutputParser(BaseModel):
@@ -64,5 +75,12 @@ class SiteProfile(BaseModel):
     job_requirements: List[str] = Field(default_factory=list)
     module_init: List[str] = Field(default_factory=list)
     systems: List[str] = Field(default_factory=list)
+    # Allow optional launcher if defined at site level in the future
+    launcher: Optional[str] = None
+    try:
+        model_config = {"extra": "ignore"}  # tolerate site-specific keys
+    except Exception:
+        class Config:
+            extra = "ignore"
 
 

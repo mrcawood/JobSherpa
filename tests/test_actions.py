@@ -73,6 +73,105 @@ commands:
 """.strip())
     return action
 
+
+def test_site_level_launcher_precedence(run_job_action, tmp_path, mocker):
+    """Site-level launcher should override scheduler KB launcher."""
+    # Create site KB with launcher ibrun and link system
+    site_dir = tmp_path / "site"
+    site_dir.mkdir(exist_ok=True)
+    (site_dir / "TACC.yaml").write_text(
+        """
+name: TACC
+systems: [mock_slurm]
+launcher: ibrun
+""".strip()
+    )
+    # Also provide a system KB to satisfy resolution path (name only is enough)
+    sys_dir = tmp_path / "system"
+    sys_dir.mkdir(exist_ok=True)
+    (sys_dir / "mock_slurm.yaml").write_text("name: mock_slurm\nscheduler: slurm\n")
+
+    # Prepare a templated recipe and job workspace
+    job_uuid = uuid.uuid4()
+    job_dir = tmp_path / str(job_uuid)
+    mock_job_workspace = JobWorkspace(
+        job_dir=job_dir, output_dir=job_dir / "output", slurm_dir=job_dir / "slurm", script_path=job_dir / "job_script.sh"
+    )
+    mock_template = MagicMock()
+    # Render a script capturing the launcher line via a minimal template
+    mock_template.render.return_value = "#!/bin/bash\n{{ launcher or 'srun' }} app\n"
+
+    run_job_action.recipe_index.find_best.return_value = MOCK_RECIPE
+    run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
+    run_job_action.tool_executor.execute.return_value = "Submitted batch job 12345"
+
+    # Act
+    with patch("jinja2.Environment.get_template", return_value=mock_template):
+        # Simulate interactive system selection path by clearing system_config and providing context
+        run_job_action.system_config = None
+        result = run_job_action.run("prompt", context={"system": "mock_slurm", "workspace": str(tmp_path)})
+
+    # Assert the template context contains launcher from site precedence
+    context = mock_template.render.call_args.args[0]
+    assert context.get("launcher") == "ibrun"
+
+
+def test_system_config_not_mutated_by_scheduler_mapping(run_job_action, tmp_path, mocker):
+    """Ensure we do not write scheduler commands into system_config."""
+    # Remove any commands field
+    run_job_action.system_config.pop("commands", None)
+    original_copy = dict(run_job_action.system_config)
+
+    job_uuid = uuid.uuid4()
+    job_dir = tmp_path / str(job_uuid)
+    mock_job_workspace = JobWorkspace(
+        job_dir=job_dir, output_dir=job_dir / "output", slurm_dir=job_dir / "slurm", script_path=job_dir / "job_script.sh"
+    )
+    mock_template = MagicMock()
+    mock_template.render.return_value = "script content"
+
+    run_job_action.recipe_index.find_best.return_value = MOCK_RECIPE
+    run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
+    run_job_action.tool_executor.execute.return_value = "Submitted batch job 12345"
+
+    with patch("jinja2.Environment.get_template", return_value=mock_template), \
+         patch("builtins.open", mock_open()):
+        run_job_action.run("prompt")
+
+    # Assert field still absent
+    assert "commands" not in run_job_action.system_config
+    assert run_job_action.system_config == original_copy
+
+
+def test_scheduler_kb_missing_uses_defaults(run_job_action, tmp_path, mocker):
+    """If scheduler KB is absent, built-in defaults still resolve submit->sbatch."""
+    # Remove schedulers dir to simulate missing KB
+    sched_dir = tmp_path / "schedulers"
+    if sched_dir.exists():
+        for f in sched_dir.iterdir():
+            f.unlink()
+        sched_dir.rmdir()
+
+    job_uuid = uuid.uuid4()
+    job_dir = tmp_path / str(job_uuid)
+    mock_job_workspace = JobWorkspace(
+        job_dir=job_dir, output_dir=job_dir / "output", slurm_dir=job_dir / "slurm", script_path=job_dir / "job_script.sh"
+    )
+    mock_template = MagicMock()
+    mock_template.render.return_value = "script content"
+
+    run_job_action.recipe_index.find_best.return_value = MOCK_RECIPE
+    run_job_action.workspace_manager.create_job_workspace.return_value = mock_job_workspace
+    run_job_action.tool_executor.execute.return_value = "Submitted batch job 12345"
+
+    with patch("jinja2.Environment.get_template", return_value=mock_template), \
+         patch("builtins.open", mock_open()):
+        run_job_action.run("prompt")
+
+    run_job_action.tool_executor.execute.assert_called_with(
+        "sbatch", [mock_job_workspace.script_path.name], workspace=str(job_dir)
+    )
+
 @pytest.fixture
 def query_history_action(mocker):
     """Fixture to create a QueryHistoryAction instance with a mocked JobHistory."""

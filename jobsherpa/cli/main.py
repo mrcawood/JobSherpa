@@ -3,6 +3,7 @@ import logging
 import yaml
 import os
 import getpass
+from jobsherpa.util.errors import ExceptionManager
 from typing import Optional
 # from jobsherpa.agent.agent import JobSherpaAgent # <-- This will be moved
 from jobsherpa.agent.config_manager import ConfigManager
@@ -66,8 +67,13 @@ def config_get(
         print(f"Error: User profile not found at {path}")
         raise typer.Exit(1)
         
-    with open(path, 'r') as f:
-        config = yaml.safe_load(f)
+    try:
+        with open(path, 'r') as f:
+            config = yaml.safe_load(f)
+    except Exception as e:
+        from jobsherpa.util.errors import ExceptionManager
+        typer.secho(ExceptionManager.handle(e), fg=typer.colors.RED)
+        raise typer.Exit(1)
         
     value = config.get("defaults", {}).get(key)
     
@@ -95,8 +101,13 @@ def config_show(
         print(f"Error: User profile not found at {profile_path}")
         raise typer.Exit(code=1)
         
-    with open(profile_path, 'r') as f:
-        print(f.read())
+    try:
+        with open(profile_path, 'r') as f:
+            print(f.read())
+    except Exception as e:
+        from jobsherpa.util.errors import ExceptionManager
+        typer.secho(ExceptionManager.handle(e), fg=typer.colors.RED)
+        raise typer.Exit(code=1)
 
 
 def setup_logging(level: int):
@@ -180,7 +191,8 @@ def run(
             import traceback
             traceback.print_exc()
         else:
-            typer.secho(f"An unexpected error occurred: {e}", fg=typer.colors.RED)
+            user_msg = ExceptionManager.handle(e)
+            typer.secho(user_msg, fg=typer.colors.RED)
         raise typer.Exit(code=1)
 
 def run_app():

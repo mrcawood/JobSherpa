@@ -22,6 +22,9 @@ from jobsherpa.kb.module_client import ModuleClient
 from jobsherpa.kb.system_index import SystemIndex
 from jobsherpa.kb.app_registry import AppRegistry
 from jobsherpa.kb.site_loader import load_site_profile
+from jobsherpa.util.io import read_yaml
+from jobsherpa.kb.service import KnowledgeBaseService
+from jobsherpa.util.errors import ExceptionManager
 from jobsherpa.kb.scheduler_loader import load_scheduler_profile
 
 
@@ -38,6 +41,44 @@ DEFAULT_SCHEDULER_COMMANDS = {
         "cancel": "scancel",
     }
 }
+
+class _ParamRegistry:
+    """
+    Minimal registry to track parameter origins for dry-run reporting.
+    """
+    def __init__(self) -> None:
+        self._items: list[tuple[str, str, str]] = []  # (key, value, origin)
+
+    def set(self, key: str, value, origin: str) -> None:
+        try:
+            val_str = "" if value is None else str(value)
+        except Exception:
+            val_str = str(value)
+        # Overwrite if exists
+        for i, (k, _, _) in enumerate(self._items):
+            if k == key:
+                self._items[i] = (key, val_str, origin)
+                break
+        else:
+            self._items.append((key, val_str, origin))
+
+    def setdefault(self, key: str, value, origin: str) -> None:
+        if not any(k == key for (k, _, _) in self._items):
+            self.set(key, value, origin)
+
+    def render_table(self) -> str:
+        if not self._items:
+            return ""
+        rows = sorted(self._items, key=lambda t: t[0])
+        col1 = max(len("Parameter"), max(len(k) for k, _, _ in rows))
+        col2 = max(len("Value"), max(len(v) for _, v, _ in rows))
+        col3 = max(len("Origin"), max(len(o) for _, _, o in rows))
+        header = f"{'Parameter'.ljust(col1)}  {'Value'.ljust(col2)}  {'Origin'.ljust(col3)}"
+        sep = f"{'-'*col1}  {'-'*col2}  {'-'*col3}"
+        lines = [header, sep]
+        for k, v, o in rows:
+            lines.append(f"{k.ljust(col1)}  {v.ljust(col2)}  {o.ljust(col3)}")
+        return "\n".join(lines)
 
 class RunJobAction:
     def __init__(
@@ -75,6 +116,8 @@ class RunJobAction:
                     self.system_profile_model = SystemProfile.parse_obj(system_config)  # type: ignore[attr-defined]
                 except Exception:
                     self.system_profile_model = None
+        # Private cache of scheduler command mappings; do not expose in system_config/template context
+        self._scheduler_commands: dict[str, str] = {}
 
     def _resolve_command(self, generic_command: str) -> str:
         """
@@ -91,22 +134,30 @@ class RunJobAction:
             scheduler_name = None
         if not scheduler_name:
             return generic_command
-        # Prefer built-in defaults where available to avoid file I/O during tests
-        if scheduler_name in DEFAULT_SCHEDULER_COMMANDS:
-            commands_map = DEFAULT_SCHEDULER_COMMANDS[scheduler_name]
-        else:
-            # Fall back to KB loader if no built-in defaults exist
-            sched_profile = load_scheduler_profile(scheduler_name, base_dir=self.knowledge_base_dir)
-            if not sched_profile or not getattr(sched_profile, "commands", None):
-                return generic_command
-            try:
-                commands_map = sched_profile.commands.model_dump(exclude_none=True)  # type: ignore[attr-defined]
-            except AttributeError:
-                commands_map = sched_profile.commands.dict(exclude_none=True)  # type: ignore[attr-defined]
+        # Populate private cache once
+        if not self._scheduler_commands:
+            if scheduler_name in DEFAULT_SCHEDULER_COMMANDS:
+                self._scheduler_commands = DEFAULT_SCHEDULER_COMMANDS[scheduler_name]
+            else:
+                sched_profile = load_scheduler_profile(scheduler_name, base_dir=self.knowledge_base_dir)
+                if sched_profile and getattr(sched_profile, "commands", None):
+                    try:
+                        self._scheduler_commands = sched_profile.commands.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+                    except AttributeError:
+                        self._scheduler_commands = sched_profile.commands.dict(exclude_none=True)  # type: ignore[attr-defined]
+                # Backward-compat fallback: do NOT write into system_config; only read if present
+                if not self._scheduler_commands and isinstance(self.system_config, dict):
+                    sc = self.system_config.get("commands")
+                    if isinstance(sc, dict):
+                        self._scheduler_commands = {k: v for k, v in sc.items() if isinstance(v, str)}
+        commands_map = self._scheduler_commands or {}
         return commands_map.get(generic_command, generic_command)
 
     def run(self, prompt: str, context: Optional[dict] = None) -> ActionResult:
         # First, try to update the agent's configuration from the conversational context
+        provenance = _ParamRegistry()
+        kb_load_notes: list[str] = []
+        kb_service = KnowledgeBaseService(base_dir=self.knowledge_base_dir)
         if context:
             if 'workspace' in context and not self.user_config.defaults.workspace:
                 # Normalize and validate workspace: expand env vars and ~, ensure exists & writable
@@ -135,14 +186,18 @@ class RunJobAction:
                     )
                 # Update config and manager
                 self.user_config.defaults.workspace = expanded_path
+                provenance.set("workspace", expanded_path, "user input")
                 self.workspace_manager.base_path = Path(expanded_path)
                 
             if 'system' in context and not self.system_config:
                 system_name = context['system']
                 system_config_path = os.path.join(self.knowledge_base_dir, "system", f"{system_name}.yaml")
                 if os.path.exists(system_config_path):
-                    with open(system_config_path, 'r') as f:
-                        self.system_config = yaml.safe_load(f)
+                    logger.debug("Loading system profile from KB: %s", system_config_path)
+                    self.system_config, self.system_profile_model = kb_service.load_system(system_name)
+                    kb_load_notes.append(f"system KB: {system_config_path}")
+                    # Reset scheduler command cache when system changes
+                    self._scheduler_commands = {}
                     # Always load scheduler command mappings from scheduler KB (single source of truth)
                     if isinstance(self.system_config, dict):
                         scheduler_name = self.system_config.get("scheduler")
@@ -154,6 +209,7 @@ class RunJobAction:
                                 except AttributeError:
                                     self.system_config["commands"] = sched_profile.commands.dict(exclude_none=True)  # type: ignore[attr-defined]
                     self.user_config.defaults.system = system_name
+                    provenance.set("system", system_name, "user input")
                 else:
                     return ActionResult(
                         message=f"I can't find a system profile named '{system_name}'. What system should I use?",
@@ -229,6 +285,8 @@ class RunJobAction:
             default_context = {}
             if self.system_config and "defaults" in self.system_config:
                 default_context.update(self.system_config["defaults"])
+                for k, v in self.system_config["defaults"].items():
+                    provenance.setdefault(k, v, "system KB")
             if self.user_config:
                 if isinstance(self.user_config, UserConfig):
                     defaults_obj = self.user_config.defaults
@@ -237,8 +295,12 @@ class RunJobAction:
                     except AttributeError:
                         defaults_dict = defaults_obj.dict(exclude_none=True)  # v1
                     default_context.update(defaults_dict)
+                    for k, v in defaults_dict.items():
+                        provenance.setdefault(k, v, "user KB")
                 elif isinstance(self.user_config, dict) and "defaults" in self.user_config:
                     default_context.update(self.user_config["defaults"])
+                    for k, v in self.user_config["defaults"].items():
+                        provenance.setdefault(k, v, "user KB")
             
             # Merge defaults, allowing conversational context to override
             for key, value in default_context.items():
@@ -246,19 +308,41 @@ class RunJobAction:
             
             # Add recipe-specific args, which have the highest precedence
             template_context.update(recipe.get("template_args", {}))
+            for k, v in recipe.get("template_args", {}).items():
+                provenance.set(k, v, "recipe")
 
-            # Integrate KB-derived fields
+            # Integrate KB-derived fields with precedence: user KB > site KB > system KB > scheduler KB
             # System: module init, launcher, partition fallback
             if self.system_profile_model:
                 # module init commands for environment setup
                 if self.system_profile_model.module_init:
                     template_context.setdefault("module_init", self.system_profile_model.module_init)
                 # launcher (e.g., ibrun/srun)
-                if getattr(self.system_profile_model, "commands", None) and getattr(self.system_profile_model.commands, "launcher", None):
-                    template_context.setdefault("launcher", self.system_profile_model.commands.launcher)
+                # Site-level precedence: if a site is detected and has a launcher, prefer it
+                site_profile = None
+                try:
+                    site_profile = kb_service.find_site_for_system(self.system_profile_model.name)
+                except Exception:
+                    site_profile = None
+
+                if site_profile and getattr(site_profile, "launcher", None):
+                    if "launcher" not in template_context:
+                        template_context["launcher"] = site_profile.launcher
+                        provenance.setdefault("launcher", site_profile.launcher, "site KB")
+                elif getattr(self.system_profile_model, "commands", None) and getattr(self.system_profile_model.commands, "launcher", None):
+                    if "launcher" not in template_context:
+                        template_context["launcher"] = self.system_profile_model.commands.launcher
+                        provenance.setdefault("launcher", self.system_profile_model.commands.launcher, "system KB")
+                else:
+                    # Scheduler KB launcher as last resort
+                    launcher = (self._scheduler_commands or {}).get("launcher")
+                    if launcher and "launcher" not in template_context:
+                        template_context["launcher"] = launcher
+                        provenance.setdefault("launcher", launcher, "scheduler KB")
                 # partition fallback
                 if not template_context.get("partition") and self.system_profile_model.available_partitions:
                     template_context["partition"] = self.system_profile_model.available_partitions[0]
+                    provenance.set("partition", template_context["partition"], "system KB (fallback)")
 
             # Application: module loads via ModuleClient abstraction
             if self.system_profile_model and recipe_model:
@@ -267,8 +351,10 @@ class RunJobAction:
                 loads = mc.module_loads()
                 if init_cmds:
                     template_context.setdefault("module_init", init_cmds)
+                    provenance.setdefault("module_init", init_cmds, "app registry")
                 if loads:
                     template_context.setdefault("module_loads", loads)
+                    provenance.setdefault("module_loads", loads, "app registry")
                 # Resolve executable path: prefer modules (PATH). If no modules, try system binding or registry.
                 if not loads:
                     exe_name = (recipe_model.binary or {}).get("name") if recipe_model.binary else None
@@ -277,22 +363,29 @@ class RunJobAction:
                     exe_path = sys_bind.get("exe_path") or self.app_registry.get_exe_path(self.system_profile_model.name, recipe_model.name)
                     if exe_path:
                         template_context.setdefault("wrf_exe", exe_path)
+                        provenance.setdefault("wrf_exe", exe_path, "system KB/app registry")
                     elif exe_name:
                         # Let PATH handle it by name
                         template_context.setdefault("wrf_exe", exe_name)
+                        provenance.setdefault("wrf_exe", exe_name, "binary name")
 
             # Dataset: resolve from prompt, apply resource hints
             dataset_profile = self.dataset_index.resolve(prompt)
             if dataset_profile:
                 hints = dataset_profile.resource_hints or {}
-                template_context.setdefault("nodes", hints.get("nodes"))
-                template_context.setdefault("time", hints.get("time"))
+                if hints.get("nodes") is not None:
+                    template_context.setdefault("nodes", hints.get("nodes"))
+                    provenance.setdefault("nodes", hints.get("nodes"), "dataset KB")
+                if hints.get("time") is not None:
+                    template_context.setdefault("time", hints.get("time"))
+                    provenance.setdefault("time", hints.get("time"), "dataset KB")
                 # dataset path for the current system if available
                 if self.system_profile_model and dataset_profile.locations:
                     sys_name = self.system_profile_model.name
                     ds_path = dataset_profile.locations.get(sys_name)
                     if ds_path:
                         template_context.setdefault("dataset_path", ds_path)
+                        provenance.setdefault("dataset_path", ds_path, "dataset KB")
                 # staging steps and pre-run edits
                 if dataset_profile.staging and dataset_profile.staging.steps:
                     template_context.setdefault("staging_steps", dataset_profile.staging.steps)
@@ -335,7 +428,13 @@ class RunJobAction:
             template_context["job_dir"] = str(job_workspace.job_dir)
 
             try:
+                def _track(name: str, value):
+                    logger.debug("Setting template param %-20s = %s", name, value)
+                    return value
+
                 env = jinja2.Environment(loader=jinja2.FileSystemLoader("tools"))
+                # Add a simple debug function to trace substitutions if used in templates
+                env.globals['dbg'] = _track
                 template = env.get_template(recipe["template"])
                 rendered_script = template.render(template_context)
                 logger.debug("Rendered script content:\n%s", rendered_script)
@@ -346,7 +445,8 @@ class RunJobAction:
                 logger.info("Wrote rendered script to: %s", job_workspace.script_path)
 
                 # The "tool" in a templated recipe is a generic command (e.g., 'submit'); resolve via scheduler KB
-                submit_command = self._resolve_command(recipe["tool"]) 
+                submit_command = self._resolve_command(recipe["tool"])
+                provenance.set("submit_command", submit_command, "scheduler KB" if submit_command != recipe["tool"] else "recipe")
 
                 # The ToolExecutor will now execute from within the job directory
                 execution_result = self.tool_executor.execute(
@@ -355,12 +455,12 @@ class RunJobAction:
                     workspace=str(job_workspace.job_dir)
                 )
 
-            except jinja2.TemplateNotFound:
+            except jinja2.TemplateNotFound as e:
                 logger.error("Template '%s' not found in tools directory.", recipe["template"])
-                return ActionResult(message=f"Error: Template '{recipe['template']}' not found.")
+                return ActionResult(message=ExceptionManager.handle(e), error=str(e))
             except Exception as e:
                 logger.error("Error rendering template: %s", e, exc_info=True)
-                return ActionResult(message=f"Error rendering template: {e}", error=str(e))
+                return ActionResult(message=ExceptionManager.handle(e), error=str(e))
         else:
             # Fallback to existing logic for non-templated recipes
             tool_name = self._resolve_command(recipe['tool'])
@@ -400,6 +500,19 @@ class RunJobAction:
 
         logger.info("Execution finished, but no job ID was parsed.")
         response = f"Found recipe '{recipe['name']}'.\nExecution result: {execution_result}"
+        if isinstance(execution_result, str) and execution_result.startswith("DRY-RUN:"):
+            kb_lines = ("\n" + "\n".join(f"Loaded {note}" for note in kb_load_notes)) if kb_load_notes else ""
+            table = provenance.render_table()
+            if table or kb_lines:
+                # Reorder for readability: show KB loads and parameter table before the execution line
+                parts = [f"Found recipe '{recipe['name']}'."]
+                if kb_lines:
+                    parts.append(kb_lines.strip())
+                if table:
+                    parts.append("\n".join(["Parameters and origin:", table]))
+                parts.append(f"Execution result: {execution_result}")
+                response = "\n\n".join(parts)
+        
         return ActionResult(message=response, is_waiting=False)
 
     # Legacy RAG helpers removed in favor of RecipeIndex
