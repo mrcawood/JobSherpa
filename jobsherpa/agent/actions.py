@@ -389,14 +389,71 @@ class RunJobAction:
                 if self.system_profile_model and dataset_profile.locations:
                     sys_name = self.system_profile_model.name
                     ds_path = dataset_profile.locations.get(sys_name)
+                    if not ds_path:
+                        # Try case-insensitive match for system key
+                        for key, value in dataset_profile.locations.items():
+                            if str(key).lower() == str(sys_name).lower():
+                                ds_path = value
+                                break
                     if ds_path:
                         template_context.setdefault("dataset_path", ds_path)
                         provenance.setdefault("dataset_path", ds_path, "dataset KB")
+                    else:
+                        # Dataset selected but not available on this system
+                        return ActionResult(
+                            message=(
+                                f"The dataset '{dataset_profile.name}' has no location defined for system '{self.system_profile_model.name}'. "
+                                f"Please provide a dataset path or choose a different dataset."
+                            ),
+                            is_waiting=True,
+                            param_needed="dataset_path",
+                        )
                 # staging steps and pre-run edits
                 if dataset_profile.staging and dataset_profile.staging.steps:
-                    template_context.setdefault("staging_steps", dataset_profile.staging.steps)
+                    # Pre-render staging steps to resolve nested Jinja placeholders (e.g., {{ staging.url }})
+                    try:
+                        ds_env = jinja2.Environment()
+                        staging_url = getattr(dataset_profile.staging, "url", None)
+                        rendered_steps = []
+                        for step in (dataset_profile.staging.steps or []):
+                            tmpl = ds_env.from_string(step)
+                            rendered = tmpl.render(staging={"url": staging_url}, dataset_path=template_context.get("dataset_path"))
+                            rendered_steps.append(rendered)
+                        template_context.setdefault("staging_steps", rendered_steps)
+                        # Validate unresolved placeholders
+                        if any("{{" in s or "}}" in s for s in rendered_steps):
+                            return ActionResult(
+                                message=(
+                                    "Some dataset staging steps contain unresolved placeholders. "
+                                    "Please ensure dataset parameters (e.g., staging.url) are defined."
+                                ),
+                                is_waiting=True,
+                                param_needed="dataset",
+                            )
+                    except Exception as e:
+                        logger.error("Error rendering dataset staging steps: %s", e, exc_info=True)
+                        return ActionResult(message=ExceptionManager.handle(e), error=str(e))
                 if dataset_profile.pre_run_edits:
-                    template_context.setdefault("pre_run_edits", dataset_profile.pre_run_edits)
+                    try:
+                        ds_env = jinja2.Environment()
+                        rendered_edits = []
+                        for edit in (dataset_profile.pre_run_edits or []):
+                            tmpl = ds_env.from_string(edit)
+                            rendered = tmpl.render(dataset_path=template_context.get("dataset_path"))
+                            rendered_edits.append(rendered)
+                        template_context.setdefault("pre_run_edits", rendered_edits)
+                        if any("{{" in s or "}}" in s for s in rendered_edits):
+                            return ActionResult(
+                                message=(
+                                    "Some dataset pre-run edits contain unresolved placeholders. "
+                                    "Please ensure dataset parameters are defined."
+                                ),
+                                is_waiting=True,
+                                param_needed="dataset",
+                            )
+                    except Exception as e:
+                        logger.error("Error rendering dataset pre-run edits: %s", e, exc_info=True)
+                        return ActionResult(message=ExceptionManager.handle(e), error=str(e))
             else:
                 # Enforce dataset presence if the application requires it
                 if recipe_model and getattr(recipe_model, "dataset_required", False):
