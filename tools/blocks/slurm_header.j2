@@ -3,7 +3,7 @@
 #SBATCH --output=slurm/slurm-%j.out
 #SBATCH --error=slurm/slurm-%j.err
 #SBATCH --partition={{ partition }}
-{%- if allocation %}#SBATCH --account={{ allocation }}{% endif %}
+{% if allocation %}#SBATCH --account={{ allocation }}{% endif %}
 #SBATCH --nodes={{ nodes }}
 #SBATCH --ntasks-per-node={{ ntasks_per_node }}
 #SBATCH --time={{ time }}
