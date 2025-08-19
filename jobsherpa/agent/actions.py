@@ -371,8 +371,12 @@ class RunJobAction:
                         template_context["wrf_exe"] = exe_name
                         provenance.set("wrf_exe", exe_name, "binary name")
 
-            # Dataset: resolve from prompt, apply resource hints
-            dataset_profile = self.dataset_index.resolve(prompt)
+            # Dataset: resolve from user-provided context first, then fall back to scanning the prompt
+            dataset_profile = None
+            if context and isinstance(context, dict) and context.get("dataset"):
+                dataset_profile = self.dataset_index.resolve(str(context.get("dataset")))
+            if not dataset_profile:
+                dataset_profile = self.dataset_index.resolve(prompt)
             if dataset_profile:
                 hints = dataset_profile.resource_hints or {}
                 if hints.get("nodes") is not None:
