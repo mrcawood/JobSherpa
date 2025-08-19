@@ -351,19 +351,22 @@ class RunJobAction:
                 if loads:
                     template_context.setdefault("module_loads", loads)
                     provenance.setdefault("module_loads", loads, "app registry")
-                # Resolve executable path: prefer modules (PATH). If no modules, try system binding or registry.
-                if not loads:
+                # Always honor system-bound exe_path if defined
+                sys_bind = (self.system_profile_model.apps or {}).get(recipe_model.name, {})
+                bound_exe = sys_bind.get("exe_path")
+                if bound_exe:
+                    template_context["wrf_exe"] = bound_exe
+                    provenance.set("wrf_exe", bound_exe, "system KB app binding")
+                # If not provided, resolve executable path via registry or binary name
+                if "wrf_exe" not in template_context:
                     exe_name = (recipe_model.binary or {}).get("name") if recipe_model.binary else None
-                    # Check system bindings first
-                    sys_bind = (self.system_profile_model.apps or {}).get(recipe_model.name, {})
-                    exe_path = sys_bind.get("exe_path") or self.app_registry.get_exe_path(self.system_profile_model.name, recipe_model.name)
-                    if exe_path:
-                        template_context.setdefault("wrf_exe", exe_path)
-                        provenance.setdefault("wrf_exe", exe_path, "system KB/app registry")
+                    fallback_exe = self.app_registry.get_exe_path(self.system_profile_model.name, recipe_model.name)
+                    if fallback_exe:
+                        template_context["wrf_exe"] = fallback_exe
+                        provenance.set("wrf_exe", fallback_exe, "app registry")
                     elif exe_name:
-                        # Let PATH handle it by name
-                        template_context.setdefault("wrf_exe", exe_name)
-                        provenance.setdefault("wrf_exe", exe_name, "binary name")
+                        template_context["wrf_exe"] = exe_name
+                        provenance.set("wrf_exe", exe_name, "binary name")
 
             # Dataset: resolve from prompt, apply resource hints
             dataset_profile = self.dataset_index.resolve(prompt)

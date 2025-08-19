@@ -9,3 +9,6 @@ filesystem_roots:
   scratch: /scratch1
   work: /work2
 
+apps:
+  wrf:
+    exe_path: /scratch1/06280/mcawood/benchpro/apps/frontera/cascadelake/intel19/impi19/wrf/4.4/avx2/install/main/wrf.exe
