@@ -380,11 +380,11 @@ class RunJobAction:
             if dataset_profile:
                 hints = dataset_profile.resource_hints or {}
                 if hints.get("nodes") is not None:
-                    template_context.setdefault("nodes", hints.get("nodes"))
-                    provenance.setdefault("nodes", hints.get("nodes"), "dataset KB")
+                    template_context["nodes"] = hints.get("nodes")
+                    provenance.set("nodes", hints.get("nodes"), "dataset KB")
                 if hints.get("time") is not None:
-                    template_context.setdefault("time", hints.get("time"))
-                    provenance.setdefault("time", hints.get("time"), "dataset KB")
+                    template_context["time"] = hints.get("time")
+                    provenance.set("time", hints.get("time"), "dataset KB")
                 # dataset path for the current system if available
                 if self.system_profile_model and dataset_profile.locations:
                     sys_name = self.system_profile_model.name
