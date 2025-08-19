@@ -1,10 +1,6 @@
 name: Vista
 scheduler: slurm
 description: A hypothetical SLURM cluster that requires partition and account for all jobs.
-commands:
-  submit: sbatch
-  status: squeue
-  history: sacct
 job_requirements:
   - partition
   - allocation

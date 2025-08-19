@@ -6,4 +6,5 @@ job_requirements:
 module_init: []
 systems:
   - frontera
-
+  - vista
+launcher: ibrun
