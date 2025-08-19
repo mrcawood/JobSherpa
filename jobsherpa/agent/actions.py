@@ -10,10 +10,6 @@ from jobsherpa.agent.job_history import JobHistory
 from jobsherpa.agent.workspace_manager import WorkspaceManager
 from jobsherpa.agent.tool_executor import ToolExecutor
 from jobsherpa.config import UserConfig
-from haystack import Pipeline
-from haystack.document_stores import InMemoryDocumentStore
-from haystack.nodes import BM25Retriever
-from haystack import Document
 from jobsherpa.agent.types import ActionResult
 from jobsherpa.agent.recipe_index import SimpleKeywordIndex
 from jobsherpa.kb.models import SystemProfile, ApplicationRecipe

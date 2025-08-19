@@ -11,10 +11,6 @@ from jobsherpa.agent.workspace_manager import WorkspaceManager
 from jobsherpa.agent.intent_classifier import IntentClassifier
 from jobsherpa.agent.conversation_manager import ConversationManager
 from jobsherpa.agent.actions import RunJobAction, QueryHistoryAction
-from haystack.document_stores import InMemoryDocumentStore
-from haystack.nodes import BM25Retriever
-from haystack import Pipeline
-from haystack import Document
 from jobsherpa.agent.config_manager import ConfigManager
 from jobsherpa.config import UserConfig
 from jobsherpa.util.io import read_yaml
