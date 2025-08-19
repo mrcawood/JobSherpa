@@ -1,10 +1,13 @@
 {% macro dataset_prep(dataset_path=None, staging_steps=[], pre_run_edits=[]) -%}
+{# If a dataset_path is provided for this system, copy its contents into the current directory (job_dir) #}
 {%- if dataset_path %}
-cd {{ dataset_path }}
+cp -r {{ dataset_path }}/. .
 {%- endif %}
+{# Then run any staging steps (e.g., fetch/extract tarballs) relative to the current directory #}
 {%- for step in staging_steps %}
 {{ step }}
 {%- endfor %}
+{# Finally apply any pre-run edits (e.g., sed on namelist files) #}
 {%- for edit in pre_run_edits %}
 {{ edit }}
 {%- endfor %}
