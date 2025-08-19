@@ -27,9 +27,9 @@ class ExceptionManager:
 		return ("An unexpected error occurred. Re-run with --debug for details.", logging.ERROR)
 
 	@staticmethod
-	def handle(exc: Exception) -> str:
+	def handle(exc: Exception, include_trace: bool = False) -> str:
 		msg, level = ExceptionManager.map_exception(exc)
-		logger.log(level, "Handled exception: %s", exc, exc_info=True)
+		logger.log(level, "Handled exception: %s", exc, exc_info=include_trace)
 		return msg
 
 

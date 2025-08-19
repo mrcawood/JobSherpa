@@ -188,7 +188,7 @@ def run(
             
     except Exception as e:
         # Always map exceptions to user-friendly messages; avoid raw tracebacks in CLI output
-        user_msg = ExceptionManager.handle(e)
+        user_msg = ExceptionManager.handle(e, include_trace=False)
         typer.secho(user_msg, fg=typer.colors.RED)
         if debug:
             # Provide a concise debug hint without full traceback spam
