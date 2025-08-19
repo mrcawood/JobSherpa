@@ -83,7 +83,12 @@ class JobSherpaAgent:
                     )
                     # Keep profile_path so we can offer to save later into the same file
         
-        self.workspace = user_config.defaults.workspace
+        # Normalize workspace by expanding ~ and environment variables (e.g., $SCRATCH)
+        try:
+            expanded_ws = os.path.expandvars(os.path.expanduser(user_config.defaults.workspace or ""))
+        except Exception:
+            expanded_ws = user_config.defaults.workspace or ""
+        self.workspace = expanded_ws
         history_dir = os.path.join(self.workspace, ".jobsherpa") if self.workspace else os.path.join(os.getcwd(), ".jobsherpa")
         os.makedirs(history_dir, exist_ok=True)
         history_file = os.path.join(history_dir, "history.json")

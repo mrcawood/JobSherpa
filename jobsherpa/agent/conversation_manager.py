@@ -149,6 +149,10 @@ class ConversationManager:
             items = [(k, v) for k, v in items if k in selected]
         for key, value in items:
             try:
+                # Expand env vars and user in workspace before saving
+                if key == "workspace" and isinstance(value, str):
+                    import os
+                    value = os.path.expandvars(os.path.expanduser(value))
                 setattr(config.defaults, key, value)
             except Exception:
                 logger.warning("Skipping unsupported key '%s' during save.", key)
