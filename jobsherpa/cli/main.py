@@ -187,12 +187,12 @@ def run(
                 current_prompt = input("> ")
             
     except Exception as e:
+        # Always map exceptions to user-friendly messages; avoid raw tracebacks in CLI output
+        user_msg = ExceptionManager.handle(e)
+        typer.secho(user_msg, fg=typer.colors.RED)
         if debug:
-            import traceback
-            traceback.print_exc()
-        else:
-            user_msg = ExceptionManager.handle(e)
-            typer.secho(user_msg, fg=typer.colors.RED)
+            # Provide a concise debug hint without full traceback spam
+            typer.secho(f"Debug error: {e}", fg=typer.colors.YELLOW)
         raise typer.Exit(code=1)
 
 def run_app():
