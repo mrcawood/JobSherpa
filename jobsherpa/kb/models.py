@@ -59,6 +59,9 @@ class ApplicationRecipe(BaseModel):
 class StagingSpec(BaseModel):
     url: str
     steps: List[str] = Field(default_factory=list)
+    # Optional helpers to normalize extracted archive layout
+    strip_components: int = 0  # tar --strip-components value
+    working_subdir: Optional[str] = None  # cd into this subdir (relative to job_dir) after staging
 
 
 class DatasetProfile(BaseModel):

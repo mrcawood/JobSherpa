@@ -414,12 +414,19 @@ class RunJobAction:
                     try:
                         ds_env = jinja2.Environment()
                         staging_url = getattr(dataset_profile.staging, "url", None)
+                        strip_components = getattr(dataset_profile.staging, "strip_components", 0)
+                        working_subdir = getattr(dataset_profile.staging, "working_subdir", None)
                         rendered_steps = []
                         for step in (dataset_profile.staging.steps or []):
                             tmpl = ds_env.from_string(step)
-                            rendered = tmpl.render(staging={"url": staging_url}, dataset_path=template_context.get("dataset_path"))
+                            rendered = tmpl.render(
+                                staging={"url": staging_url, "strip_components": strip_components, "working_subdir": working_subdir},
+                                dataset_path=template_context.get("dataset_path"),
+                            )
                             rendered_steps.append(rendered)
                         template_context.setdefault("staging_steps", rendered_steps)
+                        if working_subdir:
+                            template_context.setdefault("working_subdir", working_subdir)
                         # Validate unresolved placeholders
                         if any("{{" in s or "}}" in s for s in rendered_steps):
                             return ActionResult(

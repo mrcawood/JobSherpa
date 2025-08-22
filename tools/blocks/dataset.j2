@@ -7,6 +7,10 @@ cp -r {{ dataset_path }}/. .
 {%- for step in staging_steps %}
 {{ step }}
 {%- endfor %}
+{# If a working_subdir is defined, change into it #}
+{%- if working_subdir %}
+cd {{ working_subdir }}
+{%- endif %}
 {# Finally apply any pre-run edits (e.g., sed on namelist files) #}
 {%- for edit in pre_run_edits %}
 {{ edit }}
