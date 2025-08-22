@@ -1,1 +1,0 @@
-${mpi_exec} ${exe} < in.${dataset} >> ${output_file}
