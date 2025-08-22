@@ -1,0 +1,49 @@
+[metadata]
+benchpro_version  = 1.8.4-bab5706f
+format_version    = 1.0.1
+[build]
+app_id         = 90cae00453
+username       = mcawood
+system         = frontera
+arch           = cascadelake
+code           = lammps
+version        = 23Jun2022
+build_label    = default
+compiler       = intel/22.1.2
+mpi            = intel22/impi/22.1.2
+module_use     = /scratch1/projects/compilers/modulefiles
+modules        = intel/22.1.2, intel22/impi/22.1.2
+opt_flags      = '-O2 -xCORE-AVX512 -sox'
+threads        = 1
+bin_dir        = 
+exe_file       = lmp_intel_cpu_intelmpi
+path           = /scratch1/06280/mcawood/benchpro/apps/frontera/cascadelake/intel22/intel22impi/lammps/23Jun2022/default
+submit_time    = 2023-12-14 16:19
+script         = job.qsub
+exec_mode      = sched
+task_id        = dry_1
+stdout         = stdout.log
+stderr         = stderr.log
+[bench]
+result_id      = e78b4ba509bd
+path           = /scratch1/06280/mcawood/benchpro/results/pending/mcawood_ljmelt_2023-12-15T11-45_001N_56R_01T_00G
+system         = frontera
+launch_node    = staff.frontera
+nodes          = 1
+ranks          = 56
+threads        = 1
+gpus           = 0
+dataset        = ljmelt_4M_per_node_250_steps
+bench_label    = ljmelt
+submit_time    = 2023-12-15 11:45
+script         = ljmelt-bench.sched
+exec_mode      = sched
+task_id        = dry_run
+stdout         = stdout.log
+stderr         = stderr.log
+[result]
+output_file    = stdout.log
+description    = A simple Leonard-Jones scaling test
+method         = expr
+expr           = grep 'Performance' [output_file] | cut -d ' ' -f 2
+unit           = tau/day

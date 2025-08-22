@@ -1,0 +1,72 @@
+#!/bin/bash 
+#SBATCH -J namd_apoa1
+#SBATCH -o /scratch1/06280/mcawood/benchpro/results/pending/mcawood_namd_apoa1_2023-10-18T11-29_001N_56R_01T_00G/stdout.log
+#SBATCH -e /scratch1/06280/mcawood/benchpro/results/pending/mcawood_namd_apoa1_2023-10-18T11-29_001N_56R_01T_00G/stderr.log
+#SBATCH -p debug
+#SBATCH -t 01:00:00
+#SBATCH -N 1
+#SBATCH -n 56
+#SBATCH -A A-ccsc
+echo "START `date +"%Y"-%m-%dT%T` `date +"%s"`" 
+
+echo "JobID:    ${SLURM_JOB_ID}"
+echo "User:     ${USER}"
+echo "Hostlist: ${SLURM_NODELIST}"
+
+export         working_path=/scratch1/06280/mcawood/benchpro/results/pending/mcawood_namd_apoa1_2023-10-18T11-29_001N_56R_01T_00G
+export          output_file=stdout.log
+export             mpi_exec=ibrun 
+export          base_module=/scratch1/06280/mcawood/benchpro/apps/modulefiles
+export           app_module=frontera/cascadelake/intel19/impi19/namd/2.14/x86
+export              threads=1
+export                ranks=56
+export                nodes=1
+export                 gpus=0
+
+# Create working directory
+mkdir -p ${working_path} && cd ${working_path}
+
+export             template=namd
+export          bench_label=namd_apoa1
+export              dataset=namd_apoa1
+export        collect_stats=True
+export     script_additions=
+export          config_file=apoa1_nve.namd
+export                  exe=namd2
+export                 arch=
+export           local_repo=/scratch1/06280/mcawood/benchpro/repo
+export               stdout=stdout.log
+export               stderr=stderr.log
+export      OMP_NUM_THREADS=${threads} 
+
+# Load Modules 
+ml use /scratch1/hpc_tools/benchpro-dev/modulefiles 
+ml use ${base_module} 
+ml benchpro 
+ml ${app_module} 
+ml 
+
+# [files]
+stage https://portals-api.tacc.utexas.edu/postits/v2/f9274c4d-0317-4e9e-bdf6-78d61bbe026b-010
+
+
+#-------USER SECTION------
+
+cd ${dataset}
+
+if [ ${arch} == "cpu" ]; then
+    export LD_PRELOAD="`ls $TBBROOT/lib/intel64/gcc*/libtbbmalloc_proxy.so` $LD_PRELOAD"
+fi
+
+N_CORES=`grep processor /proc/cpuinfo | wc -l`
+NPPN=4
+NAFFIN=`echo $N_CORES $NPPN | awk '{p=($1-$2)/$2; c=$1-1; f=p+1; print "+ppn",p,"+commap ",0"-"c":"f,"+pemap 1-"c":"f"."p}'`
+
+${mpi_exec} ${exe} $NAFFIN ${config_file}
+
+#-------------------------
+
+# Provenance data collection script 
+$BPS_INC/resources/scripts/stats/collect_stats $BP_RESULTS/pending/mcawood_namd_apoa1_2023-10-18T11-29_001N_56R_01T_00G/hw_report
+
+echo "END `date +"%Y"-%m-%dT%T` `date +"%s"`" 

@@ -8,9 +8,11 @@ locations:
   Frontera: /scratch1/datasets/new_conus12km
 staging:
   url: /work2/06280/mcawood/repo_backup/new_conus12km.tgz
+  strip_components: 1
+  working_subdir: new_conus12km
   steps:
     - cp {{ staging.url }} .
-    - tar xzf $(basename {{ staging.url }})
+    - tar --strip-components={{ staging.strip_components }} -xzf $(basename {{ staging.url }})
 pre_run_edits:
   - "sed -i 's/run_hours.*/run_hours = 6/' namelist.input"
   - "sed -i 's/interval_seconds.*/interval_seconds = 10800/' namelist.input"

@@ -1,0 +1,49 @@
+[metadata]
+benchpro_version  = 1.8.2-e4f82be8
+format_version    = 1.0.1
+[build]
+app_id         = 491acec2d0
+username       = mcawood
+system         = frontera
+arch           = cascadelake
+code           = gromacs
+version        = 2022.1
+build_label    = x86
+compiler       = intel/19.1.1
+mpi            = impi/19.0.9
+module_use     = 
+modules        = intel/19.1.1, impi/19.0.9, python3/3.7.0, fftw3/3.3.10, cmake/3.24.2
+opt_flags      = '-O2 -xCORE-AVX512 -sox'
+threads        = 1
+bin_dir        = bin
+exe_file       = mdrun_mpi
+path           = /scratch1/06280/mcawood/benchpro/apps/frontera/cascadelake/intel19/impi19/gromacs/2022.1/x86
+submit_time    = 2023-10-16 06:27
+script         = job.qsub
+exec_mode      = sched
+task_id        = 5864019
+stdout         = stdout.log
+stderr         = stderr.log
+[bench]
+result_id      = 91a19880914d
+path           = /scratch1/06280/mcawood/benchpro/results/pending/mcawood_gromacs_PEP_2023-10-18T11-29_001N_56R_01T_00G
+system         = frontera
+launch_node    = staff.frontera
+nodes          = 1
+ranks          = 56
+threads        = 1
+gpus           = 0
+dataset        = gromacs_PEP
+bench_label    = gromacs_PEP
+submit_time    = 2023-10-18 11:29
+script         = gromacs_PEP-bench.sched
+exec_mode      = sched
+task_id        = dry_run
+stdout         = stdout.log
+stderr         = stderr.log
+[result]
+output_file    = md.log
+description    = benchPEP (12 M atoms, peptides in water, 2 fs time step, all bonds constrained)
+method         = expr
+expr           = grep 'Performance' [output_file] | cut -d ' ' -f 9
+unit           = ns/day
