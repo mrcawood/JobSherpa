@@ -2,4 +2,6 @@
 # This file stores default values for job submissions.
 defaults:
   partition: "development"
-  allocation: "TACC-12345"
+  allocation: "A-ccsc"
+  workspace: /scratch1/06280/mcawood/jobsherpa
+  system: frontera

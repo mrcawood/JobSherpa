@@ -14,6 +14,8 @@ tool: submit
 module_loads:
   - intel/19
   - impi/19
+  - hdf5/1.12.0
+  - netcdf/4.7.4
 output_parser:
   file: "slurm/slurm-{{ job_id }}.out"
   parser_regex: "Time.*: (\\d+)"
